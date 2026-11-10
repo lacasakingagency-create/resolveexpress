@@ -1,0 +1,27 @@
+{
+  "id": "/",
+  "name": "Resolve Express",
+  "short_name": "Resolve",
+  "description": "Da limpeza da sua casa à entrega das suas compras. Serviços e marketplace em Angola.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#071B33",
+  "theme_color": "#071B33",
+  "orientation": "portrait",
+  "categories": ["shopping", "business", "lifestyle"],
+  "icons": [
+    {
+      "src": "/assets/aistudio/file_000000005258820e97c595b2cc8d50e1_4a52b8c3.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/aistudio/file_000000005258820e97c595b2cc8d50e1_4a52b8c3.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

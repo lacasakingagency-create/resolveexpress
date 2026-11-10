@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Resolve Express</title>
+    <meta name="description" content="Da limpeza da sua casa à entrega das suas compras. Encontre serviços e profissionais de confiança num só lugar em Huambo, Angola." />
+    <meta property="og:title" content="Resolve Express" />
+    <meta property="og:description" content="Da limpeza da sua casa à entrega das suas compras. Encontre serviços e profissionais de confiança num só lugar em Huambo, Angola." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="color-scheme" content="light dark" data-default-mode="light" />
+    <meta name="theme-color" content="#071B33" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Resolve" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="/assets/aistudio/file_000000005258820e97c595b2cc8d50e1_4a52b8c3.png" />
+    <link rel="icon" type="image/png" href="/assets/aistudio/file_000000005258820e97c595b2cc8d50e1_4a52b8c3.png" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hind:wght@350;400;450;500;550;600;650;700;750&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@350;400;450;500;550;600;650;700;750&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fragment+Mono:wght@350;400;450;500;550;600;650;700;750&display=swap" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("/sw.js").catch(() => {});
+        });
+      }
+    </script>
+  </body>
+</html>
+

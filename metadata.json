@@ -1,0 +1,6 @@
+{
+  "name": "Resolve Express",
+  "description": "Da limpeza da sua casa à entrega das suas compras. Encontre serviços e profissionais de confiança num só lugar em Huambo, Angola.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
