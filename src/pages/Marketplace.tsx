@@ -4,7 +4,7 @@ import { PRODUCT_CATEGORIES, ANGOLA_PROVINCES, type Product } from "../lib/data"
 import { useStore, formatCurrency, nextOrderId, kz } from "../lib/store";
 import { AuthPromptModal } from "../ui/AuthPromptModal";
 import { PaymentCheckoutModal } from "../ui/PaymentCheckoutModal";
-import { syncOrderToSupabase } from "../lib/supabase";
+import { isSupabaseConfigured, syncOrderToSupabaseStrict } from "../lib/supabase";
 
 export function Marketplace({ initialCategory }: { initialCategory?: string }) {
   const [store, setStore] = useStore();
@@ -41,6 +41,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
   const [deliveryBairro, setDeliveryBairro] = useState(store.currentUser?.bairro || "Cidade Alta");
   const [deliveryRua, setDeliveryRua] = useState(store.currentUser?.address || "Rua do Comércio nº 45");
   const [completedOrder, setCompletedOrder] = useState<any | null>(null);
+  const [orderError, setOrderError] = useState<string | null>(null);
 
   const currentDeliveryMunicipalities =
     ANGOLA_PROVINCES.find((p) => p.name.toLowerCase() === deliveryProvince.toLowerCase())
@@ -86,16 +87,32 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
       setAuthModal({ open: true, type: "buy", itemName: product.name });
       return;
     }
+    setOrderError(null);
+    if (!product.available || product.stock <= 0) {
+      setOrderError(`O produto "${product.name}" encontra-se esgotado ou indisponível.`);
+      return;
+    }
+    const existingItem = store.cart.find((i) => i.product.id === product.id);
+    const nextQty = (existingItem?.quantity || 0) + qty;
+    if (nextQty > product.stock) {
+      setOrderError(
+        `Stock insuficiente para "${product.name}". Disponível: ${product.stock} ${product.unit}.`
+      );
+      return;
+    }
+
     setStore((st) => {
       const existing = st.cart.find((i) => i.product.id === product.id);
       if (existing) {
         return {
           cart: st.cart.map((i) =>
-            i.product.id === product.id ? { ...i, quantity: i.quantity + qty } : i
+            i.product.id === product.id
+              ? { ...i, quantity: Math.min(product.stock, i.quantity + qty) }
+              : i
           ),
         };
       }
-      return { cart: [...st.cart, { product, quantity: qty }] };
+      return { cart: [...st.cart, { product, quantity: Math.min(product.stock, qty) }] };
     });
   };
 
@@ -107,6 +124,14 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
   };
 
   const handleUpdateQty = (productId: string, delta: number) => {
+    setOrderError(null);
+    const item = store.cart.find((i) => i.product.id === productId);
+    if (item && delta > 0 && item.quantity + delta > item.product.stock) {
+      setOrderError(
+        `Quantidade máxima disponível para "${item.product.name}": ${item.product.stock}.`
+      );
+      return;
+    }
     setStore((st) => ({
       cart: st.cart
         .map((i) => (i.product.id === productId ? { ...i, quantity: i.quantity + delta } : i))
@@ -146,12 +171,24 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
   };
 
   const handleProceedToPayment = () => {
+    setOrderError(null);
     if (store.cart.length === 0) return;
     if (!store.currentUser) {
       setCheckoutModalOpen(false);
       setAuthModal({ open: true, type: "buy" });
       return;
     }
+
+    const invalidItem = store.cart.find(
+      (i) => !i.product.available || i.quantity <= 0 || i.quantity > i.product.stock
+    );
+    if (invalidItem) {
+      setOrderError(
+        `O item "${invalidItem.product.name}" não tem stock suficiente (${invalidItem.product.stock} disponíveis).`
+      );
+      return;
+    }
+
     const orderSeq = store.orderSeq + 1;
     const newOrderCode = nextOrderId(orderSeq);
     const sellers = Array.from(new Set(store.cart.map((i) => i.product.sellerName)));
@@ -167,17 +204,49 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
     setPaymentModalOpen(true);
   };
 
-  const handlePaymentSuccess = (paymentResult: {
+  const handlePaymentSuccess = async (paymentResult: {
     method: string;
     status: string;
     reference?: string;
     proofOfPayment?: string;
     paymentDetails: Record<string, any>;
-  }) => {
-    if (!pendingOrderData) return;
-    const orderSeq = store.orderSeq + 1;
+  }): Promise<boolean> => {
+    if (!pendingOrderData) return false;
+    setOrderError(null);
 
-    // Detect active referral code (from store or session)
+    // Case 1: Re-opening payment modal for an already-created completedOrder
+    if (completedOrder && pendingOrderData.id === completedOrder.id) {
+      const isConfirmedPaid =
+        paymentResult.status === "Pago" || paymentResult.status === "Confirmado";
+      const updatedOrder = {
+        ...completedOrder,
+        paymentMethod: paymentResult.method,
+        paymentStatus: paymentResult.status,
+        paymentReference: paymentResult.reference,
+        proofOfPayment: paymentResult.proofOfPayment,
+        paymentDetails: paymentResult.paymentDetails,
+        orderStatus: isConfirmedPaid ? ("Confirmada" as const) : completedOrder.orderStatus,
+      };
+
+      if (isSupabaseConfigured()) {
+        const res = await syncOrderToSupabaseStrict(updatedOrder, "update_payment");
+        if (!res.ok) {
+          const msg = res.error || "Falha ao atualizar os dados de pagamento no Supabase.";
+          setOrderError(msg);
+          throw new Error(msg);
+        }
+      }
+
+      setStore((st) => ({
+        productOrders: st.productOrders.map((o) => (o.id === updatedOrder.id ? updatedOrder : o)),
+      }));
+      setCompletedOrder(updatedOrder);
+      setPaymentModalOpen(false);
+      return true;
+    }
+
+    // Case 2: New order creation
+    const orderSeq = store.orderSeq + 1;
     const affCode =
       store.activeAffiliateRef ||
       (typeof sessionStorage !== "undefined"
@@ -191,12 +260,21 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
     const affiliateCommissionAOA = affCode ? Math.round(finalTotalAOA * defaultAffRate) : 0;
     const sellerNetAOA = Math.max(0, finalTotalAOA - platformCommissionAOA - affiliateCommissionAOA);
 
-    const firstSellerItem = store.cart.find((it) => it.product.sellerId || it.product.sellerName);
-    const sellerId = firstSellerItem?.product.sellerId;
+    const sellerIds = Array.from(
+      new Set(
+        store.cart
+          .map((it) => it.product.sellerId)
+          .filter((sid): sid is string => Boolean(sid && sid.trim()))
+      )
+    );
+    const primarySellerId = sellerIds[0];
     const matchedAffiliate = affCode ? store.affiliates?.find((a) => a.code === affCode) : undefined;
+    const isConfirmedPaid =
+      paymentResult.status === "Pago" || paymentResult.status === "Confirmado";
 
-    const newOrder = {
+    let newOrder = {
       id: pendingOrderData.id,
+      userId: store.currentUser?.id,
       customerName: store.currentUser?.name || "Cliente Resolve",
       customerPhone: store.currentUser?.phone || "923111222",
       items: [...store.cart],
@@ -206,24 +284,50 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
       totalAOA: finalTotalAOA,
       deliveryAddress: pendingOrderData.address,
       deliveryBairro: pendingOrderData.bairro,
+      deliveryProvince,
+      deliveryMunicipio,
       paymentMethod: paymentResult.method,
       paymentStatus: paymentResult.status,
       paymentReference: paymentResult.reference,
       proofOfPayment: paymentResult.proofOfPayment,
       paymentDetails: paymentResult.paymentDetails,
-      orderStatus: "Confirmada" as const,
+      orderStatus: (isConfirmedPaid ? "Confirmada" : "Recebida") as "Confirmada" | "Recebida",
       createdAt: new Date().toISOString(),
       estimatedDelivery: "30 a 60 minutos",
       sellerNames: pendingOrderData.sellers,
-      sellerId: sellerId,
+      sellerIds,
+      sellerId: primarySellerId,
       affiliateCode: affCode,
       platformCommissionAOA,
       affiliateCommissionAOA,
       sellerNetAOA,
     };
 
+    if (isSupabaseConfigured()) {
+      const res = await syncOrderToSupabaseStrict(newOrder, "insert");
+      if (!res.ok) {
+        const msg =
+          res.error || "Não foi possível gravar a encomenda no servidor. Tente novamente.";
+        setOrderError(msg);
+        throw new Error(msg);
+      }
+
+      if (res.data) {
+        newOrder = {
+          ...newOrder,
+          subtotalAOA: Number(res.data.subtotal_aoa ?? newOrder.subtotalAOA),
+          deliveryFeeAOA: Number(res.data.delivery_fee_aoa ?? newOrder.deliveryFeeAOA),
+          discountAOA: Number(res.data.discount_aoa ?? newOrder.discountAOA),
+          totalAOA: Number(res.data.total_aoa ?? newOrder.totalAOA),
+          platformCommissionAOA: Number(
+            res.data.commission_amount_aoa ?? newOrder.platformCommissionAOA
+          ),
+          sellerNetAOA: Number(res.data.seller_payout_amount_aoa ?? newOrder.sellerNetAOA),
+        };
+      }
+    }
+
     setStore((st) => {
-      // 1. Create affiliate conversion record if applicable
       const newConversions = affCode
         ? [
             {
@@ -234,12 +338,12 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
               itemType: "PRODUCT" as const,
               itemId: newOrder.items[0]?.product.id || "item-general",
               itemName: newOrder.items.map((it) => it.product.name).join(", "),
-              saleAmountAOA: finalTotalAOA,
+              saleAmountAOA: newOrder.totalAOA,
               affiliateCommissionPercent: Math.round(defaultAffRate * 100),
               commissionAmountAOA: affiliateCommissionAOA,
-              platformCommissionAOA,
-              sellerId: sellerId,
-              sellerNetAOA,
+              platformCommissionAOA: newOrder.platformCommissionAOA,
+              sellerId: primarySellerId,
+              sellerNetAOA: newOrder.sellerNetAOA,
               status: "PENDENTE" as const,
               createdAt: new Date().toISOString(),
             },
@@ -247,28 +351,26 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
           ]
         : st.affiliateConversions || [];
 
-      // 2. Update affiliate stats
       const updatedAffiliates = affCode
         ? (st.affiliates || []).map((a) =>
             a.code === affCode
               ? {
                   ...a,
                   totalOrdersReferred: a.totalOrdersReferred + 1,
-                  totalSalesVolumeAOA: a.totalSalesVolumeAOA + finalTotalAOA,
+                  totalSalesVolumeAOA: a.totalSalesVolumeAOA + newOrder.totalAOA,
                   pendingCommissionAOA: a.pendingCommissionAOA + affiliateCommissionAOA,
                 }
               : a
           )
         : st.affiliates;
 
-      // 3. Update seller stats
       const updatedSellers = (st.sellers || []).map((sel) => {
-        if (sellerId && sel.id === sellerId) {
+        if (sellerIds.includes(sel.id)) {
           return {
             ...sel,
             totalSalesCount: sel.totalSalesCount + 1,
-            totalGrossAOA: sel.totalGrossAOA + finalTotalAOA,
-            pendingBalanceAOA: sel.pendingBalanceAOA + sellerNetAOA,
+            totalGrossAOA: sel.totalGrossAOA + newOrder.totalAOA,
+            pendingBalanceAOA: sel.pendingBalanceAOA + newOrder.sellerNetAOA,
           };
         }
         return sel;
@@ -277,19 +379,17 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
       return {
         orderSeq,
         productOrders: [newOrder, ...st.productOrders],
-        cart: [], // Clear cart
+        cart: [],
         affiliateConversions: newConversions,
         affiliates: updatedAffiliates,
         sellers: updatedSellers,
       };
     });
 
-    // Seamlessly persist to Supabase if configured
-    syncOrderToSupabase(newOrder);
-
     setCompletedOrder(newOrder);
     setPaymentModalOpen(false);
     setCartDrawerOpen(false);
+    return true;
   };
 
   return (
@@ -297,6 +397,16 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
       eyebrow="Marketplace Resolve Express"
       title="Compre produtos essenciais com entrega ao domicílio no Huambo."
     >
+      {/* Top Error Alert */}
+      {orderError && (
+        <div className="mb-4 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs font-semibold text-destructive flex items-center justify-between gap-2">
+          <span>{orderError}</span>
+          <button type="button" onClick={() => setOrderError(null)} className="font-bold underline">
+            Fechar
+          </button>
+        </div>
+      )}
+
       {/* Top Search & Cart trigger */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div className="relative flex-1 min-w-[280px] max-w-md">

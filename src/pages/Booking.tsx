@@ -12,7 +12,7 @@ import {
 import { useStore, svcConfig, nextBookingId, kz, type BookingRecord } from "../lib/store";
 import { AuthPromptModal } from "../ui/AuthPromptModal";
 import { PaymentCheckoutModal } from "../ui/PaymentCheckoutModal";
-import { syncBookingToSupabase } from "../lib/supabase";
+import { isSupabaseConfigured, syncBookingToSupabaseStrict } from "../lib/supabase";
 
 const STEPS = ["Detalhes", "Local", "Data", "Pagamento", "Confirmar"];
 
@@ -62,6 +62,8 @@ export function Booking({ id }: { id: string }) {
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [done, setDone] = useState<BookingRecord | null>(null);
+  const [bookingError, setBookingError] = useState<string | null>(null);
+  const [isSubmittingBooking, setIsSubmittingBooking] = useState(false);
 
   const currentBookingMunicipalities =
     ANGOLA_PROVINCES.find((p) => p.name.toLowerCase() === bookingProvince.toLowerCase())
@@ -177,18 +179,22 @@ export function Booking({ id }: { id: string }) {
     setStep(step + 1);
   };
 
-  const confirm = () => {
+  const confirm = async () => {
+    setBookingError(null);
     if (!store.currentUser) {
       setAuthModalOpen(true);
       return;
     }
     if (![0, 1, 2, 3, 4].every((s) => validate(s))) return;
+    setIsSubmittingBooking(true);
+
     const seq = store.seq + 1;
     const bid = nextBookingId(seq);
     const pay = PAYMENTS.find((p) => p.id === form.payment);
     const fullAddress = `${form.street}, ${form.bairro}, ${bookingMunicipio}, ${bookingProvince}`;
-    const item: BookingRecord = {
+    let item: BookingRecord = {
       id: bid,
+      userId: store.currentUser.id,
       serviceId: svc.id,
       service: svc.name,
       category: cat.name,
@@ -198,6 +204,9 @@ export function Booking({ id }: { id: string }) {
       details: form.details,
       photos: form.photos,
       address: fullAddress,
+      province: bookingProvince,
+      municipio: bookingMunicipio,
+      bairro: form.bairro,
       ref: form.ref,
       date: form.date,
       slot: form.slot,
@@ -214,22 +223,41 @@ export function Booking({ id }: { id: string }) {
       createdAt: new Date().toISOString(),
       history: [{ at: new Date().toISOString(), status: "Recebido" }],
     };
+
+    if (isSupabaseConfigured()) {
+      const res = await syncBookingToSupabaseStrict(item, "insert");
+      if (!res.ok) {
+        setBookingError(
+          res.error || "Não foi possível gravar o agendamento na base de dados."
+        );
+        setIsSubmittingBooking(false);
+        return;
+      }
+      if (res.data?.total_aoa !== undefined && res.data?.total_aoa !== null) {
+        const dbTotal = Number(res.data.total_aoa);
+        if (dbTotal > 0) {
+          item = { ...item, total: dbTotal };
+        }
+      }
+    }
+
     setStore((st) => ({ seq, bookings: [item, ...st.bookings] }));
     setDone(item);
-    syncBookingToSupabase(item);
-    if (total && total > 0 && form.payment !== "cash") {
+    setIsSubmittingBooking(false);
+    if (item.total && item.total > 0 && form.payment !== "cash") {
       setPaymentModalOpen(true);
     }
   };
 
-  const handleBookingPaymentSuccess = (paymentResult: {
+  const handleBookingPaymentSuccess = async (paymentResult: {
     method: string;
     status: string;
     reference?: string;
     proofOfPayment?: string;
     paymentDetails: Record<string, any>;
-  }) => {
-    if (!done) return;
+  }): Promise<boolean> => {
+    if (!done) return false;
+    setBookingError(null);
     const updated: BookingRecord = {
       ...done,
       payment: paymentResult.method,
@@ -238,12 +266,23 @@ export function Booking({ id }: { id: string }) {
       proofOfPayment: paymentResult.proofOfPayment,
       paymentDetails: paymentResult.paymentDetails,
     };
+
+    if (isSupabaseConfigured()) {
+      const res = await syncBookingToSupabaseStrict(updated, "update");
+      if (!res.ok) {
+        const msg =
+          res.error || "Não foi possível atualizar os dados de pagamento do agendamento.";
+        setBookingError(msg);
+        throw new Error(msg);
+      }
+    }
+
     setStore((st) => ({
       bookings: st.bookings.map((b) => (b.id === done.id ? updated : b)),
     }));
     setDone(updated);
-    syncBookingToSupabase(updated);
     setPaymentModalOpen(false);
+    return true;
   };
 
   if (done) {
@@ -731,10 +770,17 @@ export function Booking({ id }: { id: string }) {
               )}
             </div>
 
+            {bookingError && (
+              <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs font-semibold text-destructive">
+                {bookingError}
+              </div>
+            )}
+
             <div className="mt-8 mr-20 flex gap-3 @3xl:mr-0">
               {step > 0 && (
                 <Btn
                   kind="ghost"
+                  disabled={isSubmittingBooking}
                   onClick={() => {
                     setErrors({});
                     setStep(step - 1);
@@ -748,7 +794,9 @@ export function Booking({ id }: { id: string }) {
                   Continuar <Icon name="ArrowRight" className="size-4" />
                 </Btn>
               ) : (
-                <Btn onClick={confirm}>Confirmar pedido</Btn>
+                <Btn onClick={confirm} disabled={isSubmittingBooking}>
+                  {isSubmittingBooking ? "A registar pedido..." : "Confirmar pedido"}
+                </Btn>
               )}
             </div>
           </>

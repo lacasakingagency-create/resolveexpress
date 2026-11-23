@@ -417,17 +417,181 @@ export function Contacts() {
   );
 }
 
-export const Legal = ({ k }: { k: string }) => (
-  <Section eyebrow="Documento legal" title={LEGAL_DOCS[k] || "Documento"}>
-    <div className="max-w-2xl rounded-[var(--radius)] border border-warn bg-warn/10 p-5">
-      <p className="font-semibold">Conteúdo em revisão jurídica.</p>
-      <p className="mt-1 text-muted-foreground">
-        Este texto é gerido no painel (Gestão de conteúdo) e só é publicado
-        depois de aprovado por advogado.
-      </p>
-    </div>
-  </Section>
-);
+const DOC_CATEGORY_LABELS: Record<string, string> = {
+  ...LEGAL_DOCS,
+  catalogo: "Catálogo & Portfólio",
+  tabela_precos: "Tabela de Preços",
+  comunicado: "Comunicado Oficial",
+  guia: "Guia & Manual",
+  outro: "Documento Público",
+};
+
+const safePublicUrl = (url?: string): string | null => {
+  if (!url || typeof url !== "string") return null;
+  const trimmed = url.trim();
+  if (
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("/")
+  ) {
+    return trimmed;
+  }
+  return null;
+};
+
+const formatFileBytes = (bytes?: number): string => {
+  if (!bytes || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+};
+
+export function Legal({ k }: { k?: string }) {
+  const [store] = useStore();
+  const activeDocs = (store.publicDocuments || []).filter((d) => d.active);
+  const matchingDocs = k
+    ? activeDocs.filter((d) => d.category === k)
+    : activeDocs;
+  const otherDocs = k
+    ? activeDocs.filter((d) => d.category !== k)
+    : [];
+
+  return (
+    <Section
+      eyebrow={k ? "Documento oficial" : "Documentos públicos"}
+      title={k ? LEGAL_DOCS[k] || DOC_CATEGORY_LABELS[k] || "Documento" : "Documentos, Catálogos & Normas Oficiais"}
+    >
+      {matchingDocs.length > 0 ? (
+        <div className="grid gap-6 max-w-4xl">
+          {matchingDocs.map((doc) => {
+            const safeUrl = safePublicUrl(doc.fileUrl);
+            const isPdf = doc.fileType === "application/pdf" || doc.fileName.toLowerCase().endsWith(".pdf");
+            const isImage = !isPdf && doc.fileType?.startsWith("image/");
+            return (
+              <div
+                key={doc.id}
+                className="rounded-[var(--radius)] border border-border bg-paper p-5 sm:p-6 shadow-xs space-y-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <span className="inline-block rounded-full bg-action/10 px-2.5 py-0.5 text-[11px] font-bold text-action mb-1.5">
+                      {DOC_CATEGORY_LABELS[doc.category] || doc.category}
+                    </span>
+                    <h2 className="font-display text-xl font-black text-primary">
+                      {doc.title}
+                    </h2>
+                    {doc.description && (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {doc.description}
+                      </p>
+                    )}
+                    <p className="mt-2 text-xs text-muted-foreground font-mono">
+                      {doc.fileName}
+                      {doc.fileSize ? ` · ${formatFileBytes(doc.fileSize)}` : ""}
+                      {doc.createdAt ? ` · Publicado em ${doc.createdAt}` : ""}
+                    </p>
+                  </div>
+                  {safeUrl && (
+                    <div className="flex flex-wrap gap-2">
+                      <a
+                        href={safeUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-[var(--radius)] bg-action px-4 py-2 text-xs font-bold text-action-ink hover:brightness-105 shadow-2xs"
+                      >
+                        <Icon name="ExternalLink" className="size-3.5" />
+                        Abrir
+                      </a>
+                      <a
+                        href={safeUrl}
+                        download={doc.fileName}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-border bg-mist px-4 py-2 text-xs font-bold text-primary hover:bg-mist/80"
+                      >
+                        <Icon name="Download" className="size-3.5" />
+                        Descarregar
+                      </a>
+                    </div>
+                  )}
+                </div>
+
+                {safeUrl && isImage && (
+                  <div className="overflow-hidden rounded-xl border border-border bg-mist/30 p-2">
+                    <img
+                      src={safeUrl}
+                      alt={doc.title}
+                      className="mx-auto max-h-[540px] w-auto rounded-lg object-contain"
+                    />
+                  </div>
+                )}
+
+                {safeUrl && isPdf && (
+                  <div className="overflow-hidden rounded-xl border border-border bg-mist/20">
+                    <iframe
+                      src={safeUrl}
+                      title={doc.title}
+                      className="h-[520px] w-full"
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="max-w-2xl rounded-[var(--radius)] border border-warn bg-warn/10 p-5">
+          <p className="font-semibold">
+            {k ? "Documento ainda não publicado." : "Nenhum documento público publicado."}
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            Este espaço apresenta automaticamente os PDFs, termos legais, catálogos e anexos enviados pela administração através do painel administrativo.
+          </p>
+        </div>
+      )}
+
+      {otherDocs.length > 0 && (
+        <div className="mt-10 max-w-4xl space-y-4">
+          <h3 className="font-display text-lg font-bold text-primary">
+            Outros documentos publicados
+          </h3>
+          <div className="grid gap-3 @3xl:grid-cols-2">
+            {otherDocs.map((doc) => {
+              const safeUrl = safePublicUrl(doc.fileUrl);
+              return (
+                <div
+                  key={doc.id}
+                  className="flex items-center justify-between gap-3 rounded-[var(--radius)] border border-border bg-paper p-4"
+                >
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-action">
+                      {DOC_CATEGORY_LABELS[doc.category] || doc.category}
+                    </p>
+                    <p className="font-bold text-sm text-primary truncate">{doc.title}</p>
+                    <p className="text-xs text-muted-foreground truncate">{doc.fileName}</p>
+                  </div>
+                  {safeUrl && (
+                    <a
+                      href={safeUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground hover:brightness-110"
+                    >
+                      <Icon name="ExternalLink" className="size-3.5" />
+                      Ver
+                    </a>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+export const PublicDocuments = () => <Legal />;
 
 export const Account = () => (
   <Section eyebrow="Conta" title="Entrar ou criar conta.">

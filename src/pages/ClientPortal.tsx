@@ -4,10 +4,18 @@ import { useStore, formatCurrency, kz } from "../lib/store";
 import { SUBSCRIPTION_PLANS, CATEGORIES, findService, PAYMENTS, ANGOLA_BANKS } from "../lib/data";
 import { StatusPill } from "./Other";
 import { PaymentCheckoutModal } from "../ui/PaymentCheckoutModal";
+import {
+  isSupabaseConfigured,
+  syncOrderToSupabaseStrict,
+  syncBookingToSupabaseStrict,
+} from "../lib/supabase";
+
+const normalizePhone = (p?: string) => (p || "").replace(/\D/g, "").slice(-9);
 
 export function ClientPortal({ defaultSection }: { defaultSection?: string }) {
   const [store, setStore] = useStore();
   const [activeTab, setActiveTab] = useState<string>(defaultSection || "inicio");
+  const [portalError, setPortalError] = useState<string | null>(null);
 
   useEffect(() => {
     if (defaultSection) setActiveTab(defaultSection);
@@ -47,22 +55,43 @@ export function ClientPortal({ defaultSection }: { defaultSection?: string }) {
   const [walletTopUpOpen, setWalletTopUpOpen] = useState(false);
   const [topUpAmount, setTopUpAmount] = useState(20000);
 
-  const activeBookings = store.bookings.filter(
+  const currentUser = store.currentUser;
+  const isStaffUser = Boolean(
+    currentUser &&
+      ["ADMIN", "SUPER_ADMIN", "OPERATIONS", "CUSTOMER_SUPPORT"].includes(currentUser.role) &&
+      currentUser.active
+  );
+  const userPhoneNorm = normalizePhone(currentUser?.phone);
+
+  const userBookings = store.bookings.filter((b) => {
+    if (isStaffUser) return true;
+    if (!currentUser) return false;
+    if (b.userId) return b.userId === currentUser.id;
+    return Boolean(userPhoneNorm && normalizePhone(b.phone) === userPhoneNorm);
+  });
+
+  const userOrders = store.productOrders.filter((o) => {
+    if (isStaffUser) return true;
+    if (!currentUser) return false;
+    if (o.userId) return o.userId === currentUser.id;
+    return Boolean(userPhoneNorm && normalizePhone(o.customerPhone) === userPhoneNorm);
+  });
+
+  const activeBookings = userBookings.filter(
     (b) => !["Concluído", "Cancelado"].includes(b.status)
   );
-  const completedBookings = store.bookings.filter(
+  const completedBookings = userBookings.filter(
     (b) => b.status === "Concluído"
   );
   const nextBooking = activeBookings[0];
 
-  const totalSpentServices = store.bookings
+  const totalSpentServices = userBookings
     .filter((b) => b.status === "Concluído" && b.total)
     .reduce((sum, b) => sum + (b.total || 0), 0);
 
-  const totalSpentProducts = store.productOrders.reduce(
-    (sum, o) => sum + o.totalAOA,
-    0
-  );
+  const totalSpentProducts = userOrders
+    .filter((o) => o.orderStatus !== "Cancelada")
+    .reduce((sum, o) => sum + o.totalAOA, 0);
 
   const currentPlan =
     SUBSCRIPTION_PLANS.find((p) => p.id === store.subscriptionPlan) ||
@@ -126,14 +155,14 @@ export function ClientPortal({ defaultSection }: { defaultSection?: string }) {
     { id: "servicos", label: "Explorar Serviços", icon: "Search" },
     { id: "loja", label: "Loja de Produtos", icon: "ShoppingBasket" },
     { id: "meus-produtos", label: "Os Meus Produtos", icon: "Package" },
-    { id: "pedidos", label: `Os Meus Pedidos (${store.bookings.length})`, icon: "ClipboardList" },
+    { id: "pedidos", label: `Os Meus Pedidos (${userBookings.length})`, icon: "ClipboardList" },
     { id: "agendamentos", label: "Agendamentos", icon: "Calendar" },
     { id: "favoritos", label: "Profissionais Favoritos", icon: "Heart" },
     { id: "enderecos", label: "Endereços", icon: "MapPin" },
     { id: "pagamentos", label: "Pagamentos", icon: "CreditCard" },
     { id: "carteira", label: "Carteira", icon: "Wallet" },
     { id: "promocoes", label: "Promoções e Descontos", icon: "Tag" },
-    { id: "compras", label: `Histórico de Compras (${store.productOrders.length})`, icon: "Receipt" },
+    { id: "compras", label: `Histórico de Compras (${userOrders.length})`, icon: "Receipt" },
     { id: "avaliacoes", label: "Avaliações", icon: "Star" },
     { id: "notificacoes", label: "Notificações", icon: "Bell" },
     { id: "apoio", label: "Apoio ao Cliente", icon: "Headset" },
@@ -142,6 +171,22 @@ export function ClientPortal({ defaultSection }: { defaultSection?: string }) {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 @3xl:px-8">
+      {portalError && (
+        <div className="mb-6 flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">
+          <div className="flex items-center gap-2">
+            <Icon name="AlertTriangle" className="size-4 shrink-0" />
+            <span>{portalError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPortalError(null)}
+            className="text-red-700 hover:underline font-bold"
+          >
+            Fechar
+          </button>
+        </div>
+      )}
+
       {/* Top Banner Profile */}
       <div className="mb-8 flex flex-wrap items-center justify-between gap-4 rounded-[calc(var(--radius)*1.5)] border border-border bg-paper p-6 shadow-xs">
         <div className="flex items-center gap-4">
@@ -218,7 +263,7 @@ export function ClientPortal({ defaultSection }: { defaultSection?: string }) {
                     Encomendas
                   </span>
                   <p className="mt-2 font-display text-3xl font-black text-action">
-                    {store.productOrders.length}
+                    {userOrders.length}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">Produtos comprados</p>
                 </div>
@@ -457,9 +502,9 @@ export function ClientPortal({ defaultSection }: { defaultSection?: string }) {
                 </p>
               </div>
 
-              {store.productOrders.length > 0 ? (
+              {userOrders.length > 0 ? (
                 <div className="space-y-4">
-                  {store.productOrders.map((order) => (
+                  {userOrders.map((order) => (
                     <div key={order.id} className="rounded-[var(--radius)] border border-border bg-paper p-5 shadow-xs">
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3 mb-3">
                         <div className="flex items-center gap-2">
@@ -559,8 +604,8 @@ export function ClientPortal({ defaultSection }: { defaultSection?: string }) {
                 </Btn>
               </div>
 
-              {store.bookings.length ? (
-                store.bookings.map((b) => (
+              {userBookings.length ? (
+                userBookings.map((b) => (
                   <div key={b.id} className="rounded-[var(--radius)] border border-border bg-paper p-5 shadow-xs">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
                       <div className="flex items-center gap-2">
@@ -877,7 +922,7 @@ export function ClientPortal({ defaultSection }: { defaultSection?: string }) {
                     Saldo Disponível
                   </span>
                   <div className="font-display text-3xl sm:text-4xl font-black text-action mt-1">
-                    {kz(store.clientWallet?.balanceAOA ?? 75000)}
+                    {kz(store.clientWallet?.balanceAOA ?? 0)}
                   </div>
                   <p className="text-xs text-white/75 mt-1">
                     Titular: {store.currentUser?.name} · Carteira vinculada a +244 {store.currentUser?.phone || "923111222"}
@@ -989,7 +1034,7 @@ export function ClientPortal({ defaultSection }: { defaultSection?: string }) {
               <h2 className="font-display text-2xl font-black text-primary">
                 Histórico de Compras de Produtos
               </h2>
-              {store.productOrders.map((o) => (
+              {userOrders.map((o) => (
                 <div key={o.id} className="rounded-[var(--radius)] border border-border bg-paper p-4">
                   <div className="flex justify-between items-center text-sm border-b border-border pb-2">
                     <span className="font-mono font-bold text-primary">{o.id}</span>
@@ -1009,7 +1054,7 @@ export function ClientPortal({ defaultSection }: { defaultSection?: string }) {
               <h2 className="font-display text-2xl font-black text-primary">
                 Minhas Avaliações
               </h2>
-              {store.bookings.filter((b) => b.rating).map((b) => (
+              {userBookings.filter((b) => b.rating).map((b) => (
                 <div key={b.id} className="rounded-[var(--radius)] border border-border bg-paper p-4">
                   <div className="flex justify-between">
                     <span className="font-bold text-primary">{b.service}</span>
@@ -1148,62 +1193,97 @@ export function ClientPortal({ defaultSection }: { defaultSection?: string }) {
           customerName={checkoutItem.customerName}
           customerPhone={checkoutItem.customerPhone}
           deliveryAddress={checkoutItem.deliveryAddress}
-          onPaymentSuccess={(paymentResult) => {
-            if (checkoutItem.type === "order") {
-              setStore((st) => ({
-                productOrders: st.productOrders.map((o) =>
-                  o.id === checkoutItem.id
-                    ? {
-                        ...o,
-                        paymentMethod: paymentResult.method,
-                        paymentStatus: paymentResult.status,
-                        paymentReference: paymentResult.reference,
-                        proofOfPayment: paymentResult.proofOfPayment,
-                        paymentDetails: paymentResult.paymentDetails,
-                      }
-                    : o
-                ),
-              }));
-            } else if (checkoutItem.type === "booking") {
-              setStore((st) => ({
-                bookings: st.bookings.map((b) =>
-                  b.id === checkoutItem.id
-                    ? {
-                        ...b,
-                        payment: paymentResult.method,
-                        paymentStatus: paymentResult.status,
-                        paymentReference: paymentResult.reference,
-                        proofOfPayment: paymentResult.proofOfPayment,
-                        paymentDetails: paymentResult.paymentDetails,
-                      }
-                    : b
-                ),
-              }));
-            }
+          onPaymentSuccess={async (paymentResult) => {
+            setPortalError(null);
 
-            // If it was a wallet top-up
+            // Wallet top-up request: record pending request without altering balance locally
             if (checkoutItem.id.startsWith("RECARGA-")) {
               setStore((st) => {
-                const current = st.clientWallet?.balanceAOA ?? 75000;
+                const currentBalance = st.clientWallet?.balanceAOA ?? 0;
                 return {
                   clientWallet: {
-                    balanceAOA: current + checkoutItem.totalAOA,
+                    balanceAOA: currentBalance,
                     history: [
                       {
                         id: `CW-${Date.now().toString().slice(-4)}`,
                         date: new Date().toISOString().slice(0, 16).replace("T", " "),
                         amountAOA: checkoutItem.totalAOA,
                         type: "credit" as const,
-                        description: `Recarga via ${paymentResult.method} (${paymentResult.reference || "Confirmada"})`,
+                        description: `Recarga solicitada via ${paymentResult.method} (Ref: ${paymentResult.reference || "Pendente"} - Aguardando Confirmação Bancária)`,
                       },
                       ...(st.clientWallet?.history || []),
                     ],
                   },
                 };
               });
+              setCheckoutItem(null);
+              return true;
+            }
+
+            if (checkoutItem.type === "order") {
+              const existingOrder = store.productOrders.find((o) => o.id === checkoutItem.id);
+              if (!existingOrder) {
+                const msg = "Encomenda não encontrada para atualização de pagamento.";
+                setPortalError(msg);
+                throw new Error(msg);
+              }
+              const updatedOrder = {
+                ...existingOrder,
+                paymentMethod: paymentResult.method,
+                paymentStatus: paymentResult.status,
+                paymentReference: paymentResult.reference,
+                proofOfPayment: paymentResult.proofOfPayment,
+                paymentDetails: paymentResult.paymentDetails,
+              };
+
+              if (isSupabaseConfigured()) {
+                const syncRes = await syncOrderToSupabaseStrict(updatedOrder, "update_payment");
+                if (!syncRes.ok) {
+                  const errText = syncRes.error || "Falha ao registar pagamento da encomenda no servidor.";
+                  setPortalError(errText);
+                  throw new Error(errText);
+                }
+              }
+
+              setStore((st) => ({
+                productOrders: st.productOrders.map((o) =>
+                  o.id === checkoutItem.id ? updatedOrder : o
+                ),
+              }));
+            } else if (checkoutItem.type === "booking") {
+              const existingBooking = store.bookings.find((b) => b.id === checkoutItem.id);
+              if (!existingBooking) {
+                const msg = "Agendamento não encontrado para atualização de pagamento.";
+                setPortalError(msg);
+                throw new Error(msg);
+              }
+              const updatedBooking = {
+                ...existingBooking,
+                payment: paymentResult.method,
+                paymentStatus: paymentResult.status,
+                paymentReference: paymentResult.reference,
+                proofOfPayment: paymentResult.proofOfPayment,
+                paymentDetails: paymentResult.paymentDetails,
+              };
+
+              if (isSupabaseConfigured()) {
+                const syncRes = await syncBookingToSupabaseStrict(updatedBooking, "update");
+                if (!syncRes.ok) {
+                  const errText = syncRes.error || "Falha ao registar pagamento do serviço no servidor.";
+                  setPortalError(errText);
+                  throw new Error(errText);
+                }
+              }
+
+              setStore((st) => ({
+                bookings: st.bookings.map((b) =>
+                  b.id === checkoutItem.id ? updatedBooking : b
+                ),
+              }));
             }
 
             setCheckoutItem(null);
+            return true;
           }}
         />
       )}

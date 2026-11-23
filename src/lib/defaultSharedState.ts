@@ -26,6 +26,7 @@ export function getBaseSharedState(): Record<string, any> {
 
   return {
     customLogo: "",
+    publicDocuments: [],
     heroBanners: DEFAULT_HERO_BANNERS,
     categoryOverrides: {},
     serviceOverrides: {},

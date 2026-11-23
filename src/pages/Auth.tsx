@@ -75,7 +75,7 @@ export function Auth({
       setRegLoading(true);
       if (isConfigured) {
         try {
-          const { error } = await signUp({
+          const { error, user } = await signUp({
             email: clientReg.email.trim(),
             pass: clientReg.password,
             fullName: clientReg.name.trim(),
@@ -91,8 +91,34 @@ export function Auth({
             setRegLoading(false);
             return;
           }
+          if (!user) {
+            setClientRegErrors({
+              email: "Registo efetuado, mas aguarda confirmação de email no Supabase.",
+            });
+            setRegLoading(false);
+            return;
+          }
+          setStore((st) => ({
+            clientAddresses: [
+              {
+                id: `addr-${Date.now()}`,
+                label: "Residência Principal",
+                bairro: clientReg.bairro.trim(),
+                address: clientReg.address.trim(),
+                isDefault: true,
+              },
+              ...st.clientAddresses,
+            ],
+          }));
+          setRegLoading(false);
+          go("/portal-cliente");
+          return;
         } catch (supabaseErr: any) {
-          console.warn("Supabase sign up warning:", supabaseErr);
+          setClientRegErrors({
+            email: `Falha ao comunicar com Supabase Auth: ${supabaseErr?.message || "Erro desconhecido"}`,
+          });
+          setRegLoading(false);
+          return;
         }
       }
 
@@ -143,13 +169,18 @@ export function Auth({
 
     setLoginLoading(true);
 
-    // Se o Supabase estiver configurado e o utilizador introduziu email, valida no Supabase Auth primeiro
-    if (isConfigured && ident.includes("@")) {
+    // Quando o Supabase está configurado, NUNCA permitir bypass local nem credenciais fixas no frontend
+    if (isConfigured) {
+      if (!ident.includes("@")) {
+        setLoginError("Com Supabase Auth ativo, utilize o seu endereço de email registado e palavra-passe.");
+        setLoginLoading(false);
+        return;
+      }
       try {
-        const { error, user } = await signIn(ident, pass);
+        const { error, user, profile } = await signIn(ident, pass);
         if (!error && user) {
           setLoginLoading(false);
-          const currentRole = store.currentUser?.role || "CUSTOMER";
+          const currentRole = profile?.role || "CUSTOMER";
           const dest =
             currentRole === "ADMIN" || currentRole === "SUPER_ADMIN"
               ? "/admin"
@@ -170,13 +201,14 @@ export function Auth({
               : "/portal-cliente";
           go(dest);
           return;
-        } else if (error && !ident.includes("admin") && !ident.includes("operacao") && !ident.includes("apoio") && pass !== "2026") {
-          setLoginError(`Credenciais inválidas no Supabase: ${error.message}`);
-          setLoginLoading(false);
-          return;
         }
-      } catch (authErr) {
-        console.warn("Supabase auth verification failed:", authErr);
+        setLoginError(`Credenciais inválidas no Supabase: ${error?.message || "Email ou palavra-passe incorretos."}`);
+        setLoginLoading(false);
+        return;
+      } catch (authErr: any) {
+        setLoginError(`Falha na autenticação Supabase: ${authErr?.message || "Erro de rede"}`);
+        setLoginLoading(false);
+        return;
       }
     }
 
@@ -380,6 +412,10 @@ export function Auth({
   };
 
   const quickLoginAs = (role: UserRole) => {
+    if (isConfigured) {
+      setLoginError("O acesso rápido de demonstração está desativado porque o Supabase Auth está ativo.");
+      return;
+    }
     if (role === "SUPER_ADMIN" || role === "ADMIN") {
       setStore(() => ({
         currentUser: {
@@ -846,12 +882,23 @@ export function Auth({
             </div>
           </form>
 
-          {/* CENTRAL DE AMBIENTES E ACESSO RÁPIDO */}
+          {/* CENTRAL DE AMBIENTES E ACESSO RÁPIDO (apenas quando Supabase não está configurado) */}
+          {isConfigured ? (
+            <div className="mt-8 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 text-xs text-emerald-900 flex items-start gap-2.5">
+              <Icon name="ShieldCheck" className="size-4 shrink-0 text-emerald-600 mt-0.5" />
+              <div>
+                <p className="font-bold">Autenticação Real Ativa (Supabase Auth)</p>
+                <p className="text-emerald-800 mt-0.5">
+                  O acesso aos perfis operacionais e administrativos é validado exclusivamente por email, palavra-passe e papel atribuído na base de dados.
+                </p>
+              </div>
+            </div>
+          ) : (
           <div className="mt-8 rounded-2xl border border-border/80 bg-mist/60 p-5 sm:p-6">
             <div className="flex items-center justify-between gap-2 mb-4">
               <div>
                 <p className="text-[11px] font-black uppercase tracking-wider text-action">
-                  Estrutura de Papéis & Ambientes
+                  Estrutura de Papéis & Ambientes (Modo Preview Local)
                 </p>
                 <h3 className="font-display text-sm sm:text-base font-black text-primary">
                   Acesso Direto por Perfil Operacional
@@ -862,7 +909,7 @@ export function Auth({
               </span>
             </div>
             <p className="text-xs text-muted-foreground mb-4">
-              Selecione qualquer perfil abaixo para testar instantaneamente ou alternar para o respetivo painel de trabalho dedicado:
+              Selecione qualquer perfil abaixo para testar localmente (disponível apenas sem Supabase configurado):
             </p>
 
             <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
@@ -1029,6 +1076,7 @@ export function Auth({
               </button>
             </div>
           </div>
+          )}
 
           {/* Links de Rodapé */}
           <div className="mt-8 pt-6 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">

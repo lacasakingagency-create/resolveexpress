@@ -766,6 +766,7 @@ export function Footer() {
         </div>
         <div className={colCls}>
           <p className="mb-1 font-display font-bold text-white">{t("footer_col_legal")}</p>
+          <L to="/documentos">Documentos & Catálogos PDF</L>
           {Object.entries(LEGAL_DOCS)
             .slice(0, 4)
             .map(([k, v]) => (

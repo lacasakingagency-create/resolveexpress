@@ -11,6 +11,10 @@ import {
   mapUserRoleToDbRole,
 } from "./supabase";
 import { useStore, type UserAccount, type UserRole } from "./store";
+import {
+  refreshPlatformAssetsSnapshot,
+  refreshPlatformSettingsSnapshot,
+} from "./supabase/realtime";
 
 interface AuthContextType {
   session: Session | null;
@@ -18,7 +22,7 @@ interface AuthContextType {
   profile: UserAccount | null;
   loading: boolean;
   isConfigured: boolean;
-  signIn: (email: string, pass: string) => Promise<{ error: Error | null; user?: any }>;
+  signIn: (email: string, pass: string) => Promise<{ error: Error | null; user?: any; profile?: UserAccount | null }>;
   signUp: (params: {
     email: string;
     pass: string;
@@ -44,10 +48,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   // Sync profile from Supabase profiles table into store.currentUser
-  const syncProfile = async (currentUser: User) => {
+  const syncProfile = async (currentUser: User): Promise<UserAccount | null> => {
     try {
       const dbProfile = await getSupabaseProfile(currentUser.id);
       if (dbProfile) {
+        // Authoritative role comes exclusively from public.profiles in database
         const mappedRole = mapDbRoleToUserRole(dbProfile.role || "cliente");
         const account: UserAccount = {
           id: dbProfile.id,
@@ -62,29 +67,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           active: true,
         };
         setStore(() => ({ currentUser: account }));
-        return;
+        return account;
       }
     } catch (e) {
-      console.warn("Could not sync profile from Supabase:", e);
+      console.warn("Could not sync profile from Supabase profiles table:", e);
     }
 
-    // Fallback: use user metadata
+    // Security Fallback: NEVER trust user_metadata for administrative roles.
+    // If the database profile does not exist yet, default strictly to CLIENT.
     if (currentUser) {
       const meta = currentUser.user_metadata || {};
-      const fallbackRole = mapDbRoleToUserRole(meta.role || "cliente");
       const account: UserAccount = {
         id: currentUser.id,
         name: meta.full_name || meta.name || currentUser.email?.split("@")[0] || "Utilizador",
         email: currentUser.email || "",
         phone: meta.phone || "",
-        role: fallbackRole,
+        role: "CUSTOMER", // Strictly CUSTOMER: administrative roles require database confirmation
         province: meta.province || "Huambo",
         municipio: meta.municipio || "Huambo",
         bairro: meta.bairro || undefined,
         active: true,
       };
       setStore(() => ({ currentUser: account }));
+      return account;
     }
+    return null;
   };
 
   useEffect(() => {
@@ -105,6 +112,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(initialSession?.user ?? null);
       if (initialSession?.user) {
         syncProfile(initialSession.user).finally(() => {
+          refreshPlatformAssetsSnapshot();
+          refreshPlatformSettingsSnapshot();
           if (mounted) setLoading(false);
         });
       } else {
@@ -122,8 +131,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (event === "SIGNED_IN" && currentSession?.user) {
         await syncProfile(currentSession.user);
+        refreshPlatformAssetsSnapshot();
+        refreshPlatformSettingsSnapshot();
       } else if (event === "SIGNED_OUT") {
         setStore(() => ({ currentUser: null }));
+        refreshPlatformAssetsSnapshot();
       }
       setLoading(false);
     });
@@ -137,13 +149,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signIn = async (email: string, pass: string) => {
     setLoading(true);
     const { data, error } = await signInWithSupabase(email, pass);
+    let profile: UserAccount | null = null;
     if (!error && data?.user) {
       setUser(data.user);
       setSession(data.session);
-      await syncProfile(data.user);
+      profile = await syncProfile(data.user);
     }
     setLoading(false);
-    return { error, user: data?.user };
+    return { error, user: data?.user, profile };
   };
 
   const signUp = async (params: {
@@ -158,7 +171,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     address?: string;
   }) => {
     setLoading(true);
-    const dbRole = params.role ? mapUserRoleToDbRole(params.role) : "cliente";
+    // Security: Public self-registration is strictly 'cliente'. Administrative roles require database elevation.
+    const dbRole = "cliente";
     const { data, error } = await signUpWithSupabase({
       email: params.email,
       pass: params.pass,

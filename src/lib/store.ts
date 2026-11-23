@@ -37,9 +37,21 @@ import {
 } from "./data";
 import {
   isSupabaseConfigured,
-  getSupabasePlatformSettings,
-  saveSupabasePlatformSettings,
+  getSupabasePlatformSettingsResult,
+  saveSupabasePlatformSettingsDetailed,
+  getAuthAccessToken,
 } from "./supabase";
+import {
+  getPublicAssetUrl,
+  isTransientLocalUrl,
+  type PlatformAsset,
+  type AssetReference,
+} from "./supabase/storage";
+import {
+  subscribeToPlatformAssets,
+  subscribeToPlatformSettings,
+  type RealtimeStatus,
+} from "./supabase/realtime";
 
 export type { ImportQuoteRequest, IntermediaryListing, IntermediaryNegotiation, VirtualCardRequest };
 
@@ -86,6 +98,7 @@ export interface UserAccount {
 
 export interface BookingRecord {
   id: string;
+  userId?: string;
   serviceId: string;
   service: string;
   category: string;
@@ -95,6 +108,9 @@ export interface BookingRecord {
   details: string;
   photos: string[];
   address: string;
+  province?: string;
+  municipio?: string;
+  bairro?: string;
   ref: string;
   date: string;
   slot: string;
@@ -109,6 +125,7 @@ export interface BookingRecord {
   customer: string;
   phone: string;
   assignedTo?: string;
+  assignedStaffId?: string;
   assignedType?: "EMPLOYEE" | "PARTNER";
   partnerId?: string;
   createdAt: string;
@@ -127,6 +144,7 @@ export interface CartItem {
 
 export interface ProductOrderRecord {
   id: string; // e.g. ENC-2026-000001
+  userId?: string;
   customerName: string;
   customerPhone: string;
   items: CartItem[];
@@ -136,6 +154,8 @@ export interface ProductOrderRecord {
   totalAOA: number;
   deliveryAddress: string;
   deliveryBairro: string;
+  deliveryProvince?: string;
+  deliveryMunicipio?: string;
   paymentMethod: string;
   paymentStatus: string;
   paymentReference?: string;
@@ -151,6 +171,10 @@ export interface ProductOrderRecord {
   createdAt: string;
   estimatedDelivery: string;
   sellerNames: string[];
+  sellerIds?: string[];
+  assignedDriver?: string;
+  stockConfirmed?: boolean;
+  reservationExpiresAt?: string;
   // Praça & Affiliate Tracking
   sellerId?: string;
   affiliateCode?: string;
@@ -334,9 +358,34 @@ export interface AuditLog {
   details: string;
 }
 
+export interface PublicDocumentRecord {
+  id: string;
+  assetId?: string;
+  title: string;
+  category: string;
+  description?: string;
+  fileUrl: string;
+  fileName: string;
+  fileType: string;
+  fileSize?: number;
+  bucket?: string;
+  storagePath?: string;
+  visibility?: "public" | "private";
+  active: boolean;
+  uploadedBy?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface StoreState {
   currentUser: UserAccount | null;
   customLogo?: string;
+  assetRefs?: Record<string, AssetReference>;
+  platformAssets: PlatformAsset[];
+  realtimeStatus: RealtimeStatus;
+  cloudSyncConfirmed: boolean;
+  cloudSyncError: string | null;
+  publicDocuments: PublicDocumentRecord[];
   currency: CurrencyCode;
   language: LanguageCode;
   whatsapp: string;
@@ -493,6 +542,12 @@ export const DEMO_SUPPORT_USER: UserAccount = {
 const initial: StoreState = {
   currentUser: null,
   customLogo: "",
+  assetRefs: {},
+  platformAssets: [],
+  realtimeStatus: "idle",
+  cloudSyncConfirmed: false,
+  cloudSyncError: isSupabaseConfigured() ? null : "Supabase não configurado",
+  publicDocuments: [],
   currency: "AOA",
   language: "PT",
   whatsapp: "",
@@ -1018,23 +1073,8 @@ const initial: StoreState = {
   },
 
   clientWallet: {
-    balanceAOA: 75000,
-    history: [
-      {
-        id: "CW-01",
-        date: "2026-10-25 10:30",
-        amountAOA: 100000,
-        type: "credit",
-        description: "Recarga de saldo via Multicaixa Express",
-      },
-      {
-        id: "CW-02",
-        date: "2026-10-27 15:45",
-        amountAOA: 25000,
-        type: "debit",
-        description: "Pagamento de encomenda ENC-2026-000001",
-      },
-    ],
+    balanceAOA: 0,
+    history: [],
   },
 
   clientFavorites: ["casa--limpeza-geral", "lavandaria--recolha-e-entrega"],
@@ -1082,6 +1122,26 @@ const read = (): StoreState => {
     const raw = localStorage.getItem(KEY);
     if (!raw) return initial;
     const parsed = JSON.parse(raw);
+
+    // When Supabase is active, localStorage only hydrates local user preferences & cart—never
+    // shared admin catalogs, banners, logos, documents, or media assets.
+    if (isSupabaseConfigured()) {
+      return {
+        ...initial,
+        currency: parsed.currency || initial.currency,
+        language: parsed.language || initial.language,
+        location: parsed.location || initial.location,
+        subscriptionPlan: parsed.subscriptionPlan || initial.subscriptionPlan,
+        cart: Array.isArray(parsed.cart) ? parsed.cart : initial.cart,
+        clientFavorites: Array.isArray(parsed.clientFavorites) ? parsed.clientFavorites : initial.clientFavorites,
+        clientFavoriteProducts: Array.isArray(parsed.clientFavoriteProducts)
+          ? parsed.clientFavoriteProducts
+          : initial.clientFavoriteProducts,
+        clientAddresses: Array.isArray(parsed.clientAddresses) ? parsed.clientAddresses : initial.clientAddresses,
+        activeAffiliateRef: parsed.activeAffiliateRef || "",
+      };
+    }
+
     return {
       ...initial,
       ...parsed,
@@ -1092,6 +1152,7 @@ const read = (): StoreState => {
       serviceOverrides: parsed.serviceOverrides || {},
       categoryOverrides: parsed.categoryOverrides || {},
       heroBanners: parsed.heroBanners || DEFAULT_HERO_BANNERS,
+      publicDocuments: Array.isArray(parsed.publicDocuments) ? parsed.publicDocuments : [],
       clientWallet: parsed.clientWallet || initial.clientWallet,
       pracaCategories: parsed.pracaCategories || INITIAL_PRACA_CATEGORIES,
       sellers: parsed.sellers || INITIAL_SELLERS,
@@ -1121,6 +1182,7 @@ const listeners = new Set<(s: StoreState) => void>();
 // List of state keys that are shared globally from admin to all users across the platform
 const SHARED_KEYS = [
   "customLogo",
+  "assetRefs",
   "heroBanners",
   "categoryOverrides",
   "serviceOverrides",
@@ -1157,6 +1219,7 @@ const SHARED_KEYS = [
   "intermediaryCategories",
   "intermediaryListings",
   "intermediaryNegotiations",
+  "publicDocuments",
 ] as const;
 
 function sanitizeForStorage(obj: any, depth = 0): any {
@@ -1179,41 +1242,72 @@ function sanitizeForStorage(obj: any, depth = 0): any {
 
 export const saveToLocalStorageSafely = (s: StoreState) => {
   if (typeof window === "undefined" || !window.localStorage) return;
+
+  // When Supabase is active, localStorage must NOT act as permanent store for admin catalogs,
+  // images, documents, or Base64 blobs—only keep lightweight user preferences & cart locally.
+  const payloadToPersist: Partial<StoreState> = isSupabaseConfigured()
+    ? {
+        currency: s.currency,
+        language: s.language,
+        location: s.location,
+        subscriptionPlan: s.subscriptionPlan,
+        cart: s.cart,
+        clientFavorites: s.clientFavorites,
+        clientFavoriteProducts: s.clientFavoriteProducts,
+        clientAddresses: s.clientAddresses,
+        activeAffiliateRef: s.activeAffiliateRef,
+      }
+    : (() => {
+        const { platformAssets: _pa, realtimeStatus: _rs, ...rest } = s;
+        return rest;
+      })();
+
   try {
-    localStorage.setItem(KEY, JSON.stringify(s));
+    localStorage.setItem(KEY, JSON.stringify(payloadToPersist));
   } catch (firstErr) {
     console.warn("Storage quota exceeded or write failed; pruning heavy local cache:", firstErr);
     try {
-      const sanitized = sanitizeForStorage(s);
+      const sanitized = sanitizeForStorage(payloadToPersist);
       localStorage.setItem(KEY, JSON.stringify(sanitized));
     } catch (secondErr) {
       console.warn("Could not save to localStorage even after sanitizing. Clearing obsolete keys...", secondErr);
       try {
         localStorage.removeItem(KEY);
         const minimal: Partial<StoreState> = {
-          currentUser: s.currentUser,
           currency: s.currency,
           language: s.language,
           location: s.location,
           cart: s.cart,
-          bookings: s.bookings,
-          productOrders: s.productOrders,
         };
         localStorage.setItem(KEY, JSON.stringify(minimal));
       } catch (finalErr) {
-        // Quiet fail - NEVER allow unhandled QuotaExceededError to break React event dispatch
         console.warn("localStorage write disabled for this session:", finalErr);
       }
     }
   }
 };
 
+const STAFF_APP_ROLES = new Set<UserRole>([
+  "ADMIN",
+  "SUPER_ADMIN",
+  "OPERATIONS",
+  "CUSTOMER_SUPPORT",
+]);
+
+function isStaffAccount(user: UserAccount | null): boolean {
+  return Boolean(user && user.active && STAFF_APP_ROLES.has(user.role));
+}
+
 let syncTimeout: any = null;
 export const syncSharedStateToServer = (s: StoreState) => {
   if (typeof window === "undefined") return;
+  if (!isStaffAccount(s.currentUser)) return;
   if (syncTimeout) clearTimeout(syncTimeout);
   syncTimeout = setTimeout(async () => {
     try {
+      const token = await getAuthAccessToken();
+      if (isSupabaseConfigured() && !token) return;
+
       const payload: Record<string, any> = {};
       SHARED_KEYS.forEach((key) => {
         if ((s as any)[key] !== undefined) {
@@ -1222,7 +1316,10 @@ export const syncSharedStateToServer = (s: StoreState) => {
       });
       await fetch("/api/shared-state", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ state: payload }),
       });
     } catch {
@@ -1230,6 +1327,67 @@ export const syncSharedStateToServer = (s: StoreState) => {
     }
   }, 100);
 };
+
+const applyPlatformAssetsUpdate = (nextAssets: PlatformAsset[]) => {
+  const prevJson = JSON.stringify(state.platformAssets || []);
+  const nextJson = JSON.stringify(nextAssets || []);
+  if (prevJson === nextJson) return;
+  state = { ...state, platformAssets: nextAssets };
+  listeners.forEach((fn) => fn(state));
+};
+
+const upsertPlatformAssetInStore = (asset: PlatformAsset) => {
+  const current = state.platformAssets || [];
+  const exists = current.some((a) => a.id === asset.id);
+  const next = exists
+    ? current.map((a) => (a.id === asset.id ? asset : a))
+    : [asset, ...current];
+  state = { ...state, platformAssets: next };
+  listeners.forEach((fn) => fn(state));
+};
+
+const removePlatformAssetFromStore = (oldRow: Partial<PlatformAsset>) => {
+  if (!oldRow?.id) return;
+  const current = state.platformAssets || [];
+  const next = current.filter((a) => a.id !== oldRow.id);
+  if (next.length !== current.length) {
+    state = { ...state, platformAssets: next };
+    listeners.forEach((fn) => fn(state));
+  }
+};
+
+const updateRealtimeStatusInStore = (status: RealtimeStatus) => {
+  if (state.realtimeStatus === status) return;
+  state = { ...state, realtimeStatus: status };
+  listeners.forEach((fn) => fn(state));
+};
+
+const updateCloudSyncStateInStore = (confirmed: boolean, error?: string | null) => {
+  const nextErr = error ?? null;
+  if (state.cloudSyncConfirmed === confirmed && state.cloudSyncError === nextErr) return;
+  state = {
+    ...state,
+    cloudSyncConfirmed: confirmed,
+    cloudSyncError: nextErr,
+  };
+  listeners.forEach((fn) => fn(state));
+};
+
+function resolvePublicRefUrl(
+  refs: Record<string, AssetReference> | undefined,
+  key: string,
+  currentUrl?: string
+): string | undefined {
+  const ref = refs?.[key];
+  if (
+    ref?.bucket_id === "public-assets" &&
+    ref?.storage_path &&
+    (!currentUrl || isTransientLocalUrl(currentUrl))
+  ) {
+    return getPublicAssetUrl(ref.storage_path, "public-assets") || ref.url || currentUrl;
+  }
+  return currentUrl;
+}
 
 // Apply remote server state updates atomically
 export const applyServerStateUpdates = (serverState: any) => {
@@ -1248,6 +1406,97 @@ export const applyServerStateUpdates = (serverState: any) => {
     }
   });
 
+  // Resolve public asset URLs from persistent assetRefs when missing or transient
+  if (isSupabaseConfigured() && nextState.assetRefs) {
+    const refs = nextState.assetRefs;
+
+    const resolvedLogo = resolvePublicRefUrl(refs, "customLogo", nextState.customLogo);
+    if (resolvedLogo && resolvedLogo !== nextState.customLogo) {
+      nextState.customLogo = resolvedLogo;
+      hasChanges = true;
+    }
+
+    if (Array.isArray(nextState.heroBanners)) {
+      let bannersChanged = false;
+      const resolvedBanners = nextState.heroBanners.map((b) => {
+        const resolved = resolvePublicRefUrl(refs, `heroBanner:${b.id}`, b.image);
+        if (resolved && resolved !== b.image) {
+          bannersChanged = true;
+          return { ...b, image: resolved };
+        }
+        return b;
+      });
+      if (bannersChanged) {
+        nextState.heroBanners = resolvedBanners;
+        hasChanges = true;
+      }
+    }
+
+    if (Array.isArray(nextState.products)) {
+      let prodsChanged = false;
+      const resolvedProducts = nextState.products.map((p) => {
+        const resolved = resolvePublicRefUrl(refs, `product:${p.id}`, p.image);
+        if (resolved && resolved !== p.image) {
+          prodsChanged = true;
+          return { ...p, image: resolved };
+        }
+        return p;
+      });
+      if (prodsChanged) {
+        nextState.products = resolvedProducts;
+        hasChanges = true;
+      }
+    }
+
+    if (nextState.serviceOverrides && typeof nextState.serviceOverrides === "object") {
+      const updatedSvcOverrides = { ...nextState.serviceOverrides };
+      let svcOverChanged = false;
+      for (const sId of Object.keys(updatedSvcOverrides)) {
+        const resolved = resolvePublicRefUrl(refs, `service:${sId}`, updatedSvcOverrides[sId]?.image);
+        if (resolved && resolved !== updatedSvcOverrides[sId]?.image) {
+          updatedSvcOverrides[sId] = { ...updatedSvcOverrides[sId], image: resolved };
+          svcOverChanged = true;
+        }
+      }
+      if (svcOverChanged) {
+        nextState.serviceOverrides = updatedSvcOverrides;
+        hasChanges = true;
+      }
+    }
+
+    if (nextState.categoryOverrides && typeof nextState.categoryOverrides === "object") {
+      const updatedCatOverrides = { ...nextState.categoryOverrides };
+      let catOverChanged = false;
+      for (const cId of Object.keys(updatedCatOverrides)) {
+        const resolved = resolvePublicRefUrl(refs, `category:${cId}`, updatedCatOverrides[cId]?.image);
+        if (resolved && resolved !== updatedCatOverrides[cId]?.image) {
+          updatedCatOverrides[cId] = { ...updatedCatOverrides[cId], image: resolved };
+          catOverChanged = true;
+        }
+      }
+      if (catOverChanged) {
+        nextState.categoryOverrides = updatedCatOverrides;
+        hasChanges = true;
+      }
+    }
+
+    if (Array.isArray(nextState.publicDocuments)) {
+      let docsChanged = false;
+      const resolvedDocs = nextState.publicDocuments.map((d) => {
+        const resolved = resolvePublicRefUrl(refs, `publicDoc:${d.id}`, d.fileUrl);
+        if (resolved && resolved !== d.fileUrl) {
+          docsChanged = true;
+          return { ...d, fileUrl: resolved };
+        }
+        return d;
+      });
+      if (docsChanged) {
+        nextState.publicDocuments = resolvedDocs;
+        hasChanges = true;
+      }
+    }
+  }
+
   if (hasChanges) {
     state = nextState;
     saveToLocalStorageSafely(state);
@@ -1258,11 +1507,27 @@ export const applyServerStateUpdates = (serverState: any) => {
 export const fetchSharedStateFromServer = async () => {
   if (typeof window === "undefined") return;
   try {
+    if (isSupabaseConfigured()) {
+      const sbRes = await getSupabasePlatformSettingsResult();
+      if (sbRes.ok) {
+        updateCloudSyncStateInStore(true, null);
+        if (sbRes.settings && typeof sbRes.settings === "object" && Object.keys(sbRes.settings).length > 0) {
+          applyServerStateUpdates(sbRes.settings);
+        }
+        return;
+      }
+      updateCloudSyncStateInStore(false, sbRes.error || "Falha ao ler platform_settings no Supabase");
+      return;
+    }
+
+    updateCloudSyncStateInStore(false, "Supabase não configurado");
+    const token = await getAuthAccessToken();
     const res = await fetch(`/api/shared-state?_t=${Date.now()}`, {
       cache: "no-store",
       headers: {
         "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache",
+        Pragma: "no-cache",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
     if (res.ok) {
@@ -1271,22 +1536,18 @@ export const fetchSharedStateFromServer = async () => {
         applyServerStateUpdates(data.state);
       }
     }
-
+  } catch (err: any) {
     if (isSupabaseConfigured()) {
-      const sbSettings = await getSupabasePlatformSettings();
-      if (sbSettings && typeof sbSettings === "object") {
-        applyServerStateUpdates(sbSettings);
-      }
+      updateCloudSyncStateInStore(false, err?.message || "Erro de ligação ao Supabase");
     }
-  } catch {
-    // Quiet fail
   }
 };
 
-// Real-Time Server-Sent Events (SSE) setup for zero-delay cross-device sync
+// Real-Time Server-Sent Events (SSE) setup for local preview mode
 let sseConnection: EventSource | null = null;
 const initRealtimeSSE = () => {
   if (typeof window === "undefined" || typeof EventSource === "undefined") return;
+  if (isSupabaseConfigured()) return; // Supabase Realtime WebSockets handle real-time sync in production
   if (sseConnection) {
     try {
       sseConnection.close();
@@ -1307,7 +1568,6 @@ const initRealtimeSSE = () => {
     };
 
     sseConnection.onerror = () => {
-      // If SSE connection drops, retry after 5 seconds
       try {
         sseConnection?.close();
       } catch {}
@@ -1319,16 +1579,32 @@ const initRealtimeSSE = () => {
   }
 };
 
-// Initial sync and aggressive multi-device sync
+// Initial sync and centralized Supabase Realtime subscriptions
 if (typeof window !== "undefined") {
   // 1. Initial fetch
   fetchSharedStateFromServer();
 
-  // 2. Start real-time push channel
-  initRealtimeSSE();
+  // 2. Start centralized real-time push channels
+  if (isSupabaseConfigured()) {
+    subscribeToPlatformSettings({
+      onInitial: (settings) => applyServerStateUpdates(settings),
+      onChange: (settings) => applyServerStateUpdates(settings),
+      onStatus: (status) => updateRealtimeStatusInStore(status),
+      onSyncState: (confirmed, err) => updateCloudSyncStateInStore(confirmed, err),
+    });
 
-  // 3. Fast polling fallback (every 2.5s) to guarantee updates on phones and all networks
-  setInterval(fetchSharedStateFromServer, 2500);
+    subscribeToPlatformAssets({
+      onInitial: (assets) => applyPlatformAssetsUpdate(assets),
+      onInsert: (asset) => upsertPlatformAssetInStore(asset),
+      onUpdate: (asset) => upsertPlatformAssetInStore(asset),
+      onDelete: (oldRow) => removePlatformAssetFromStore(oldRow),
+      onStatus: (status) => updateRealtimeStatusInStore(status),
+    });
+  } else {
+    initRealtimeSSE();
+    // Polling fallback in unconfigured local preview mode
+    setInterval(fetchSharedStateFromServer, 3000);
+  }
 
   // 4. Instant sync on focus / app switch (switching between apps on smartphones)
   window.addEventListener("focus", fetchSharedStateFromServer);
@@ -1338,9 +1614,10 @@ if (typeof window !== "undefined") {
     }
   });
 
-  // 5. Flush pending changes before page unloads (F5 or tab close)
+  // 5. Flush pending changes before page unloads only in offline/non-Supabase dev mode for staff
   window.addEventListener("beforeunload", () => {
     try {
+      if (!isStaffAccount(state.currentUser) || isSupabaseConfigured()) return;
       const payload: Record<string, any> = {};
       SHARED_KEYS.forEach((key) => {
         if ((state as any)[key] !== undefined) {
@@ -1357,7 +1634,9 @@ if (typeof window !== "undefined") {
   // 6. Immediate resynchronization when coming back online after network drop
   window.addEventListener("online", () => {
     fetchSharedStateFromServer();
-    initRealtimeSSE();
+    if (!isSupabaseConfigured()) {
+      initRealtimeSSE();
+    }
   });
 }
 
@@ -1369,7 +1648,7 @@ const emit = () => {
 
 /**
  * Dedicated atomic persistence function for administrative operations.
- * Sends immediately to /api/admin-save, awaits server confirmation,
+ * Sends immediately to /api/admin-save with Bearer auth, awaits server confirmation,
  * updates memory & local storage, and logs audit record.
  */
 export async function saveAdminStateAsync(
@@ -1378,6 +1657,18 @@ export async function saveAdminStateAsync(
   details?: string
 ): Promise<{ ok: boolean; error?: string }> {
   try {
+    if (!isStaffAccount(state.currentUser)) {
+      return { ok: false, error: "Acesso negado: operação restrita à equipa autorizada." };
+    }
+
+    const token = await getAuthAccessToken();
+    if (isSupabaseConfigured() && !token) {
+      return {
+        ok: false,
+        error: "Sessão Supabase expirada ou ausente. Inicie sessão novamente.",
+      };
+    }
+
     const nextState = { ...state, ...updater(state) };
     const payload: Record<string, any> = {};
     SHARED_KEYS.forEach((key) => {
@@ -1386,38 +1677,54 @@ export async function saveAdminStateAsync(
       }
     });
 
-    // Persist to Supabase platform_settings if configured
-    if (isSupabaseConfigured()) {
-      try {
-        await saveSupabasePlatformSettings(payload);
-      } catch (sbErr) {
-        console.warn("Could not sync to Supabase platform_settings:", sbErr);
-      }
-    }
-
     const res = await fetch("/api/admin-save", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({
         state: payload,
         action: actionName || "Alteração Administrativa",
-        user: state.currentUser?.name || "Super Admin",
-        role: state.currentUser?.role || "SUPER_ADMIN",
         details: details || "Atualização confirmada e guardada no servidor.",
       }),
     });
 
-    if (!res.ok) {
-      const errJson = await res.json().catch(() => ({}));
-      throw new Error(errJson.error || `Servidor retornou erro HTTP ${res.status}`);
+    const resJson = await res.json().catch(() => ({}));
+    if (!res.ok || resJson.persisted === false) {
+      if (
+        isSupabaseConfigured() &&
+        (state.currentUser?.role === "ADMIN" || state.currentUser?.role === "SUPER_ADMIN")
+      ) {
+        const directRes = await saveSupabasePlatformSettingsDetailed(payload);
+        if (!directRes.ok) {
+          const errMsg =
+            directRes.error || resJson.error || `Servidor retornou erro HTTP ${res.status}`;
+          updateCloudSyncStateInStore(false, errMsg);
+          throw new Error(errMsg);
+        }
+      } else {
+        const errMsg = resJson.error || `Servidor retornou erro HTTP ${res.status}`;
+        if (isSupabaseConfigured()) {
+          updateCloudSyncStateInStore(false, errMsg);
+        }
+        throw new Error(errMsg);
+      }
     }
 
-    state = nextState;
+    state = {
+      ...nextState,
+      cloudSyncConfirmed: isSupabaseConfigured(),
+      cloudSyncError: isSupabaseConfigured() ? null : "Supabase não configurado",
+    };
     saveToLocalStorageSafely(state);
     listeners.forEach((fn) => fn(state));
     return { ok: true };
   } catch (err: any) {
     console.error("Erro na gravação administrativa:", err);
+    if (isSupabaseConfigured()) {
+      updateCloudSyncStateInStore(false, err?.message || "Falha de ligação ao Supabase");
+    }
     return { ok: false, error: err.message || "Falha de rede ao gravar dados" };
   }
 }

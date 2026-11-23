@@ -5,6 +5,7 @@ import {
   CATEGORIES,
   PRODUCT_CATEGORIES,
   DEFAULT_HERO_BANNERS,
+  LEGAL_DOCS,
   type Service,
   type Product,
   type Category,
@@ -19,10 +20,36 @@ import {
   getStoreCategories,
   getStoreServices,
   saveAdminStateAsync,
+  type PublicDocumentRecord,
 } from "../lib/store";
 import { StatusPill } from "./Other";
-import { saveSupabaseProduct } from "../lib/supabase";
+import {
+  getAuthAccessToken,
+  isSupabaseConfigured,
+  saveSupabaseProductStrict,
+  updateSupabaseBookingStatus,
+  updateSupabaseOrderStatus,
+} from "../lib/supabase";
+import {
+  buildAssetReference,
+  deletePlatformAsset,
+  getPrivateAssetSignedUrl,
+  type AdminDocCategory,
+  type AssetReference,
+  type PlatformAsset,
+} from "../lib/supabase/storage";
+import {
+  inspectLocalLegacyAdminState,
+  migrateLocalAdminDataToSupabase,
+  type LocalMigrationResult,
+} from "../lib/supabase/migration";
+import { refreshPlatformAssetsSnapshot } from "../lib/supabase/realtime";
 import { ImageUploader } from "../ui/ImageUploader";
+import {
+  DocumentUploader,
+  type UploadedDocumentMeta,
+  formatBytes,
+} from "../ui/DocumentUploader";
 import { PracaAdminSection } from "./PracaAdminSection";
 import { ImportAdminSection } from "./ImportAdminSection";
 import { IntermediarioAdminSection } from "./IntermediarioAdminSection";
@@ -114,6 +141,23 @@ export function Admin({ initialTab }: { initialTab?: string }) {
 
   const executePersistentSave = executeAdminSave;
 
+  const safeReplaceImage = async (oldUrl: string, newUrl: string) => {
+    if (!oldUrl) return;
+    try {
+      const token = await getAuthAccessToken();
+      await fetch("/api/storage/safe-replace-image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ oldUrl, newUrl }),
+      });
+    } catch (err) {
+      console.warn("Safe replace warning:", err);
+    }
+  };
+
   // RBAC Access Control
   const isAuthorizedAdmin =
     store.currentUser &&
@@ -152,12 +196,46 @@ export function Admin({ initialTab }: { initialTab?: string }) {
   const [commissionInput, setCommissionInput] = useState(store.partnerWallet.commissionRate);
   const [saved, setSaved] = useState(false);
   const [logoInput, setLogoInput] = useState(store.customLogo || "");
+  const [logoAssetRef, setLogoAssetRef] = useState<AssetReference | null>(null);
+  const [logoDirty, setLogoDirty] = useState(false);
   const [logoSaved, setLogoSaved] = useState(false);
   const [logoDeleting, setLogoDeleting] = useState(false);
 
+  const [docTitle, setDocTitle] = useState("");
+  const [docCategory, setDocCategory] = useState("catalogo");
+  const [docDescription, setDocDescription] = useState("");
+  const [docUploadMeta, setDocUploadMeta] = useState<UploadedDocumentMeta | null>(null);
+  const [docSaved, setDocSaved] = useState(false);
+
+  // Private Admin Documents & Central platform_assets Registry state
+  const [privDocTitle, setPrivDocTitle] = useState("");
+  const [privDocCategory, setPrivDocCategory] = useState<AdminDocCategory>("contracts");
+  const [privDocDescription, setPrivDocDescription] = useState("");
+  const [privDocMeta, setPrivDocMeta] = useState<UploadedDocumentMeta | null>(null);
+  const [assetFilterBucket, setAssetFilterBucket] = useState<
+    "all" | "public-assets" | "admin-documents" | "partner-documents"
+  >("all");
+  const [assetActionBusyId, setAssetActionBusyId] = useState<string | null>(null);
+  const [assetActionFeedback, setAssetActionFeedback] = useState<{
+    message: string;
+    ok: boolean;
+  } | null>(null);
+  const [migratingLocal, setMigratingLocal] = useState(false);
+  const [migrationResult, setMigrationResult] = useState<LocalMigrationResult | null>(null);
+  const [confirmDeleteAssetId, setConfirmDeleteAssetId] = useState<string | null>(null);
+  const [activeSignedPreview, setActiveSignedPreview] = useState<{
+    id: string;
+    title: string;
+    url: string;
+    mimeType: string;
+    isPrivate: boolean;
+  } | null>(null);
+
   useEffect(() => {
-    setLogoInput(store.customLogo || "");
-  }, [store.customLogo]);
+    if (!logoDirty) {
+      setLogoInput(store.customLogo || "");
+    }
+  }, [store.customLogo, logoDirty]);
 
   const [catId, setCatId] = useState(CATEGORIES[0].id);
 
@@ -174,6 +252,8 @@ export function Admin({ initialTab }: { initialTab?: string }) {
   const [newProdSeller, setNewProdSeller] = useState("Resolve Express Oficial");
   const [newProdDesc, setNewProdDesc] = useState("");
   const [newProdImg, setNewProdImg] = useState("");
+  const [newProdAssetRef, setNewProdAssetRef] = useState<AssetReference | null>(null);
+  const [editProdAssetRef, setEditProdAssetRef] = useState<AssetReference | null>(null);
   const [newProdImgFit, setNewProdImgFit] = useState<"cover" | "contain">("cover");
   const [newProdBadge, setNewProdBadge] = useState("");
   const [newProdFeatured, setNewProdFeatured] = useState(false);
@@ -193,7 +273,11 @@ export function Admin({ initialTab }: { initialTab?: string }) {
   const [heroFormSecondaryBtn, setHeroFormSecondaryBtn] = useState("");
   const [heroFormSecondaryTo, setHeroFormSecondaryTo] = useState("");
   const [heroFormImage, setHeroFormImage] = useState("");
+  const [heroFormAssetRef, setHeroFormAssetRef] = useState<AssetReference | null>(null);
   const [heroFormImageFit, setHeroFormImageFit] = useState<"cover" | "contain">("cover");
+  const [newSvcAssetRef, setNewSvcAssetRef] = useState<AssetReference | null>(null);
+  const [editSvcAssetRef, setEditSvcAssetRef] = useState<AssetReference | null>(null);
+  const [deptAssetRef, setDeptAssetRef] = useState<AssetReference | null>(null);
   const [heroFormActive, setHeroFormActive] = useState(true);
   const [heroFormFooterText, setHeroFormFooterText] = useState("");
   const [heroFormShowEyebrow, setHeroFormShowEyebrow] = useState(true);
@@ -287,11 +371,16 @@ export function Admin({ initialTab }: { initialTab?: string }) {
       showFooterText: heroFormShowFooterText,
     };
 
+    let ok = false;
     if (editingHeroBanner) {
       const oldImage = editingHeroBanner.image;
-      await executeAdminSave(
+      ok = await executeAdminSave(
         (st) => {
           const list = st.heroBanners && st.heroBanners.length > 0 ? st.heroBanners : DEFAULT_HERO_BANNERS;
+          const nextRefs = { ...(st.assetRefs || {}) };
+          if (heroFormAssetRef) {
+            nextRefs[`heroBanner:${editingHeroBanner.id}`] = heroFormAssetRef;
+          }
           return {
             heroBanners: list.map((b: HeroBanner) =>
               b.id === editingHeroBanner.id
@@ -301,25 +390,14 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                   }
                 : b
             ),
+            assetRefs: nextRefs,
           };
         },
         "Atualização de Banner da Hero",
         `Banner modificado: ${bannerPayload.titleStart} ${bannerPayload.titleHighlight}`
       );
-      if (oldImage && oldImage !== bannerPayload.image) {
-        try {
-          await fetch("/api/storage/safe-replace-image", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              oldUrl: oldImage,
-              newUrl: bannerPayload.image,
-              role: store.currentUser?.role,
-            }),
-          });
-        } catch (err) {
-          console.warn("Safe replace warning:", err);
-        }
+      if (ok && oldImage && oldImage !== bannerPayload.image) {
+        await safeReplaceImage(oldImage, bannerPayload.image);
       }
     } else {
       const newId = `hero-${Date.now()}`;
@@ -327,18 +405,25 @@ export function Admin({ initialTab }: { initialTab?: string }) {
         id: newId,
         ...bannerPayload,
       };
-      await executeAdminSave(
+      ok = await executeAdminSave(
         (st) => {
           const list = st.heroBanners && st.heroBanners.length > 0 ? st.heroBanners : DEFAULT_HERO_BANNERS;
-          return { heroBanners: [...list, newBanner] };
+          const nextRefs = { ...(st.assetRefs || {}) };
+          if (heroFormAssetRef) {
+            nextRefs[`heroBanner:${newId}`] = heroFormAssetRef;
+          }
+          return { heroBanners: [...list, newBanner], assetRefs: nextRefs };
         },
         "Criação de Novo Banner da Hero",
         `Banner adicionado: ${bannerPayload.titleStart} ${bannerPayload.titleHighlight}`
       );
     }
 
-    setShowAddHeroBanner(false);
-    setEditingHeroBanner(null);
+    if (ok) {
+      setHeroFormAssetRef(null);
+      setShowAddHeroBanner(false);
+      setEditingHeroBanner(null);
+    }
   };
 
   const handleDeleteHeroBanner = async (id: string) => {
@@ -349,25 +434,18 @@ export function Admin({ initialTab }: { initialTab?: string }) {
         (st) => {
           const l = st.heroBanners && st.heroBanners.length > 0 ? st.heroBanners : DEFAULT_HERO_BANNERS;
           const filtered = l.filter((b: HeroBanner) => b.id !== id);
-          return { heroBanners: filtered.length > 0 ? filtered : DEFAULT_HERO_BANNERS };
+          const nextRefs = { ...(st.assetRefs || {}) };
+          delete nextRefs[`heroBanner:${id}`];
+          return {
+            heroBanners: filtered.length > 0 ? filtered : DEFAULT_HERO_BANNERS,
+            assetRefs: nextRefs,
+          };
         },
         "Remoção de Banner da Hero",
         `Banner removido ID: ${id}`
       );
       if (ok && targetBanner?.image) {
-        try {
-          await fetch("/api/storage/safe-replace-image", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              oldUrl: targetBanner.image,
-              newUrl: "",
-              role: store.currentUser?.role,
-            }),
-          });
-        } catch (err) {
-          console.warn("Safe replace warning:", err);
-        }
+        await safeReplaceImage(targetBanner.image, "");
       }
     }
   };
@@ -528,8 +606,18 @@ export function Admin({ initialTab }: { initialTab?: string }) {
   const setStatus = async (
     id: string,
     status: "Recebido" | "Confirmado" | "Em curso" | "Concluído" | "Cancelado"
-  ) =>
-    await executeAdminSave(
+  ) => {
+    if (isSupabaseConfigured()) {
+      const sbRes = await updateSupabaseBookingStatus(id, { status });
+      if (!sbRes.ok) {
+        setSaveStatus({
+          message: `Falha ao atualizar pedido ${id} no Supabase: ${sbRes.error || "Erro desconhecido"}`,
+          ok: false,
+        });
+        return false;
+      }
+    }
+    return await executeAdminSave(
       (st) => ({
         bookings: st.bookings.map((b: any) =>
           b.id === id
@@ -544,8 +632,24 @@ export function Admin({ initialTab }: { initialTab?: string }) {
       "Atualização de Estado de Pedido",
       `Pedido ${id} -> ${status}`
     );
+  };
 
   const handleAssignBooking = async (bookingId: string, assignee: string) => {
+    const existing = store.bookings.find((b: any) => b.id === bookingId);
+    const nextStatus = existing?.status === "Recebido" ? "Confirmado" : existing?.status;
+    if (isSupabaseConfigured()) {
+      const sbRes = await updateSupabaseBookingStatus(bookingId, {
+        assignedTo: assignee || null,
+        status: nextStatus,
+      });
+      if (!sbRes.ok) {
+        setSaveStatus({
+          message: `Falha ao atribuir pedido ${bookingId} no Supabase: ${sbRes.error || "Erro desconhecido"}`,
+          ok: false,
+        });
+        return;
+      }
+    }
     await executeAdminSave(
       (st) => ({
         bookings: st.bookings.map((b: any) =>
@@ -600,56 +704,80 @@ export function Admin({ initialTab }: { initialTab?: string }) {
     setNewEmpPhone("");
   };
 
-  const handleAddCoupon = () => {
+  const handleAddCoupon = async () => {
     if (!couponCode.trim()) return;
-    setStore((st) => ({
-      coupons: [
-        {
-          code: couponCode.trim().toUpperCase(),
-          discountPercent: couponDiscount,
-          description: couponDesc.trim() || `${couponDiscount}% de desconto`,
-          active: true,
-        },
-        ...st.coupons,
-      ],
-    }));
-    setCouponCode("");
-    setCouponDesc("");
+    const code = couponCode.trim().toUpperCase();
+    const desc = couponDesc.trim() || `${couponDiscount}% de desconto`;
+    const ok = await executeAdminSave(
+      (st) => ({
+        coupons: [
+          {
+            code,
+            discountPercent: couponDiscount,
+            description: desc,
+            active: true,
+          },
+          ...st.coupons,
+        ],
+      }),
+      "Criação de Cupão Promocional",
+      `Cupão ${code} (${couponDiscount}%) ativado`
+    );
+    if (ok) {
+      setCouponCode("");
+      setCouponDesc("");
+    }
   };
 
-  const handleAddContract = () => {
+  const handleAddContract = async () => {
     if (!contractCompany.trim() || !contractNif.trim()) return;
-    setStore((st) => ({
-      contracts: [
-        {
-          id: `CTR-B2B-${Math.floor(10 + Math.random() * 90)}`,
-          companyName: contractCompany.trim(),
-          nif: contractNif.trim(),
-          contactName: "Administração",
-          phone: "923000000",
-          services: ["Limpeza empresarial", "Manutenção comercial"],
-          monthlyValueAOA: contractValue,
-          status: "Ativo",
-          startDate: new Date().toISOString().slice(0, 10),
-        },
-        ...st.contracts,
-      ],
-    }));
-    setContractCompany("");
-    setContractNif("");
+    const companyName = contractCompany.trim();
+    const nif = contractNif.trim();
+    const ok = await executeAdminSave(
+      (st) => ({
+        contracts: [
+          {
+            id: `CTR-B2B-${Math.floor(10 + Math.random() * 90)}`,
+            companyName,
+            nif,
+            contactName: "Administração",
+            phone: "923000000",
+            services: ["Limpeza empresarial", "Manutenção comercial"],
+            monthlyValueAOA: contractValue,
+            status: "Ativo",
+            startDate: new Date().toISOString().slice(0, 10),
+          },
+          ...st.contracts,
+        ],
+      }),
+      "Criação de Contrato B2B",
+      `Contrato criado para ${companyName} (NIF: ${nif})`
+    );
+    if (ok) {
+      setContractCompany("");
+      setContractNif("");
+    }
   };
 
-  const handleSendTicketReply = () => {
+  const handleSendTicketReply = async () => {
     if (!replyTicketId || !replyText.trim()) return;
-    setStore((st) => ({
-      supportTickets: st.supportTickets.map((t) =>
-        t.id === replyTicketId
-          ? { ...t, response: replyText.trim(), status: "Resolvido" }
-          : t
-      ),
-    }));
-    setReplyTicketId(null);
-    setReplyText("");
+    const targetId = replyTicketId;
+    const text = replyText.trim();
+    const ok = await executeAdminSave(
+      (st) => ({
+        supportTickets: st.supportTickets.map((t: any) =>
+          t.id === targetId
+            ? { ...t, response: text, status: "Resolvido" }
+            : t
+        ),
+      }),
+      "Resposta a Chamado de Suporte",
+      `Ticket ${targetId} respondido e marcado como Resolvido`
+    );
+    if (ok) {
+      setReplyTicketId(null);
+      setReplyText("");
+    }
   };
 
   // Product handlers
@@ -677,20 +805,41 @@ export function Admin({ initialTab }: { initialTab?: string }) {
       badge: newProdBadge.trim() || undefined,
       available: true,
     };
-    await executeAdminSave(
-      (st) => ({
-        products: [newProd, ...st.products],
-      }),
+
+    if (isSupabaseConfigured()) {
+      const sbRes = await saveSupabaseProductStrict(newProd);
+      if (!sbRes.ok) {
+        setSaveStatus({
+          message: `Falha ao gravar produto no Supabase: ${sbRes.error || "Erro desconhecido"}`,
+          ok: false,
+        });
+        return;
+      }
+    }
+
+    const ok = await executeAdminSave(
+      (st) => {
+        const nextRefs = { ...(st.assetRefs || {}) };
+        if (newProdAssetRef) {
+          nextRefs[`product:${newProd.id}`] = newProdAssetRef;
+        }
+        return {
+          products: [newProd, ...st.products],
+          assetRefs: nextRefs,
+        };
+      },
       "Criação de Produto",
       `Produto adicionado: ${newProd.name} (${newProd.priceAOA} Kz)`
     );
-    saveSupabaseProduct(newProd);
-    setShowAddProduct(false);
-    setNewProdName("");
-    setNewProdDesc("");
-    setNewProdImg("");
-    setNewProdImgFit("cover");
-    setNewProdBadge("");
+    if (ok) {
+      setShowAddProduct(false);
+      setNewProdName("");
+      setNewProdDesc("");
+      setNewProdImg("");
+      setNewProdAssetRef(null);
+      setNewProdImgFit("cover");
+      setNewProdBadge("");
+    }
   };
 
   const handleToggleProduct = async (id: string) => {
@@ -721,27 +870,20 @@ export function Admin({ initialTab }: { initialTab?: string }) {
     const targetProd = store.products.find((p: Product) => p.id === id);
     if (!confirm(`Tem a certeza que deseja eliminar o produto "${name || id}"?`)) return;
     const ok = await executeAdminSave(
-      (st) => ({
-        products: st.products.filter((p: Product) => p.id !== id),
-        featuredProducts: (st.featuredProducts || []).filter((pid: string) => pid !== id),
-      }),
+      (st) => {
+        const nextRefs = { ...(st.assetRefs || {}) };
+        delete nextRefs[`product:${id}`];
+        return {
+          products: st.products.filter((p: Product) => p.id !== id),
+          featuredProducts: (st.featuredProducts || []).filter((pid: string) => pid !== id),
+          assetRefs: nextRefs,
+        };
+      },
       "Remoção de Produto",
       `Produto removido: ${name || id}`
     );
     if (ok && targetProd?.image) {
-      try {
-        await fetch("/api/storage/safe-replace-image", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            oldUrl: targetProd.image,
-            newUrl: "",
-            role: store.currentUser?.role,
-          }),
-        });
-      } catch (err) {
-        console.warn("Safe replace warning:", err);
-      }
+      await safeReplaceImage(targetProd.image, "");
     }
   };
 
@@ -761,6 +903,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
   };
 
   const handleOpenEditProduct = (prod: Product) => {
+    setEditProdAssetRef(null);
     setEditingProduct({ ...prod, imageFit: prod.imageFit || "cover" });
   };
 
@@ -771,36 +914,45 @@ export function Admin({ initialTab }: { initialTab?: string }) {
     const oldImg = oldProduct?.image;
     const newImg = editingProduct.image;
 
-    await executeAdminSave(
-      (st) => ({
-        products: st.products.map((p: Product) => (p.id === editingProduct.id ? editingProduct : p)),
-      }),
-      "Edição de Produto",
-      `Produto atualizado: ${editingProduct.name}`
-    );
-    saveSupabaseProduct(editingProduct);
-
-    if (oldImg && newImg && oldImg !== newImg) {
-      try {
-        await fetch("/api/storage/safe-replace-image", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            oldUrl: oldImg,
-            newUrl: newImg,
-            role: store.currentUser?.role,
-          }),
+    if (isSupabaseConfigured()) {
+      const sbRes = await saveSupabaseProductStrict(editingProduct);
+      if (!sbRes.ok) {
+        setSaveStatus({
+          message: `Falha ao atualizar produto no Supabase: ${sbRes.error || "Erro desconhecido"}`,
+          ok: false,
         });
-      } catch (err) {
-        console.warn("Safe replace warning:", err);
+        return;
       }
     }
 
-    setEditingProduct(null);
+    const ok = await executeAdminSave(
+      (st) => {
+        const nextRefs = { ...(st.assetRefs || {}) };
+        if (editProdAssetRef) {
+          nextRefs[`product:${editingProduct.id}`] = editProdAssetRef;
+        }
+        return {
+          products: st.products.map((p: Product) => (p.id === editingProduct.id ? editingProduct : p)),
+          assetRefs: nextRefs,
+        };
+      },
+      "Edição de Produto",
+      `Produto atualizado: ${editingProduct.name}`
+    );
+
+    if (ok && oldImg && newImg && oldImg !== newImg) {
+      await safeReplaceImage(oldImg, newImg);
+    }
+
+    if (ok) {
+      setEditProdAssetRef(null);
+      setEditingProduct(null);
+    }
   };
 
   // Department / Category Handlers (Super Admin)
   const handleOpenEditDepartment = (category: Category) => {
+    setDeptAssetRef(null);
     setEditingDepartment({
       id: category.id,
       name: category.name,
@@ -814,36 +966,57 @@ export function Admin({ initialTab }: { initialTab?: string }) {
   const handleSaveDepartment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingDepartment || !editingDepartment.name.trim()) return;
-    await executeAdminSave(
-      (st) => ({
-        categoryOverrides: {
-          ...st.categoryOverrides,
-          [editingDepartment.id]: {
-            name: editingDepartment.name.trim(),
-            short: editingDepartment.short.trim(),
-            icon: editingDepartment.icon.trim(),
-            image: editingDepartment.image.trim(),
-            imageFit: editingDepartment.imageFit,
+    const prevDeptImage = store.categoryOverrides?.[editingDepartment.id]?.image || "";
+    const ok = await executeAdminSave(
+      (st) => {
+        const nextRefs = { ...(st.assetRefs || {}) };
+        if (deptAssetRef) {
+          nextRefs[`category:${editingDepartment.id}`] = deptAssetRef;
+        }
+        return {
+          categoryOverrides: {
+            ...st.categoryOverrides,
+            [editingDepartment.id]: {
+              name: editingDepartment.name.trim(),
+              short: editingDepartment.short.trim(),
+              icon: editingDepartment.icon.trim(),
+              image: editingDepartment.image.trim(),
+              imageFit: editingDepartment.imageFit,
+            },
           },
-        },
-      }),
+          assetRefs: nextRefs,
+        };
+      },
       "Edição de Departamento",
       `Departamento atualizado: ${editingDepartment.name}`
     );
-    setEditingDepartment(null);
+    if (ok && prevDeptImage && prevDeptImage !== editingDepartment.image.trim()) {
+      await safeReplaceImage(prevDeptImage, editingDepartment.image.trim());
+    }
+    if (ok) {
+      setDeptAssetRef(null);
+      setEditingDepartment(null);
+    }
   };
 
   const handleResetDepartment = async (id: string) => {
     if (!confirm("Tem a certeza que deseja restaurar as informações e imagem originais deste departamento?")) return;
-    await executeAdminSave(
+    const prevDeptImage = store.categoryOverrides?.[id]?.image || "";
+    const ok = await executeAdminSave(
       (st) => {
         const next = { ...st.categoryOverrides };
         delete next[id];
-        return { categoryOverrides: next };
+        const nextRefs = { ...(st.assetRefs || {}) };
+        delete nextRefs[`category:${id}`];
+        return { categoryOverrides: next, assetRefs: nextRefs };
       },
       "Restauro de Departamento",
       `Departamento ID: ${id}`
     );
+    if (ok && prevDeptImage) {
+      await safeReplaceImage(prevDeptImage, "");
+    }
+    setDeptAssetRef(null);
     setEditingDepartment(null);
   };
 
@@ -869,34 +1042,45 @@ export function Admin({ initialTab }: { initialTab?: string }) {
       imageFit: newSvcImgFit,
     };
 
-    await executeAdminSave(
-      (st) => ({
-        customServices: [newService, ...(st.customServices || [])],
-        overrides: {
-          ...st.overrides,
-          [sId]: {
-            price: newSvcPrice > 0 ? Number(newSvcPrice) : null,
-            available: true,
-            provider: newSvcProvider,
+    const ok = await executeAdminSave(
+      (st) => {
+        const nextRefs = { ...(st.assetRefs || {}) };
+        if (newSvcAssetRef) {
+          nextRefs[`service:${sId}`] = newSvcAssetRef;
+        }
+        return {
+          customServices: [newService, ...(st.customServices || [])],
+          overrides: {
+            ...st.overrides,
+            [sId]: {
+              price: newSvcPrice > 0 ? Number(newSvcPrice) : null,
+              available: true,
+              provider: newSvcProvider,
+            },
           },
-        },
-        featured: newSvcFeatured ? [...st.featured, sId] : st.featured,
-      }),
+          featured: newSvcFeatured ? [...st.featured, sId] : st.featured,
+          assetRefs: nextRefs,
+        };
+      },
       "Criação de Novo Serviço",
       `Serviço criado: ${newService.name}`
     );
 
-    setShowAddService(false);
-    setNewSvcName("");
-    setNewSvcDesc("");
-    setNewSvcImg("");
-    setNewSvcImgFit("cover");
-    setNewSvcPrice(15000);
-    setNewSvcFeatured(false);
+    if (ok) {
+      setShowAddService(false);
+      setNewSvcName("");
+      setNewSvcDesc("");
+      setNewSvcImg("");
+      setNewSvcAssetRef(null);
+      setNewSvcImgFit("cover");
+      setNewSvcPrice(15000);
+      setNewSvcFeatured(false);
+    }
   };
 
   const handleOpenEditService = (s: Service) => {
     const cfg = svcConfig(store, s);
+    setEditSvcAssetRef(null);
     setEditingService(s);
     setEditSvcName(s.name);
     setEditSvcCategory(s.categoryId);
@@ -913,8 +1097,10 @@ export function Admin({ initialTab }: { initialTab?: string }) {
     e.preventDefault();
     if (!editingService || !editSvcName.trim()) return;
     const sId = editingService.id;
+    const prevImg = editingService.image;
+    const nextImg = editSvcImg.trim();
 
-    await executeAdminSave(
+    const ok = await executeAdminSave(
       (st) => {
         const isCustom = st.customServices?.some((s: Service) => s.id === sId);
         const updatedCustom = isCustom
@@ -926,7 +1112,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     categoryId: editSvcCategory,
                     unit: editSvcUnit.trim(),
                     description: editSvcDesc.trim(),
-                    image: editSvcImg.trim() || s.image,
+                    image: nextImg || s.image,
                     imageFit: editSvcImgFit,
                     provider: editSvcProvider,
                   }
@@ -948,7 +1134,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
           [sId]: {
             name: editSvcName.trim(),
             description: editSvcDesc.trim(),
-            image: editSvcImg.trim(),
+            image: nextImg,
             imageFit: editSvcImgFit,
             price: editSvcPrice,
             unit: editSvcUnit.trim(),
@@ -962,31 +1148,56 @@ export function Admin({ initialTab }: { initialTab?: string }) {
             : [...st.featured, sId]
           : st.featured.filter((x: string) => x !== sId);
 
+        const nextRefs = { ...(st.assetRefs || {}) };
+        if (editSvcAssetRef) {
+          nextRefs[`service:${sId}`] = editSvcAssetRef;
+        }
+
         return {
           customServices: updatedCustom,
           overrides: newOverrides,
           serviceOverrides: newServiceOverrides,
           featured: newFeatured,
+          assetRefs: nextRefs,
         };
       },
       "Edição de Serviço",
       `Serviço atualizado: ${editSvcName}`
     );
 
-    setEditingService(null);
+    if (ok && prevImg && nextImg && prevImg !== nextImg) {
+      await safeReplaceImage(prevImg, nextImg);
+    }
+
+    if (ok) {
+      setEditSvcAssetRef(null);
+      setEditingService(null);
+    }
   };
 
   const handleDeleteService = async (serviceId: string, serviceName: string) => {
     if (!confirm(`Tem a certeza que deseja remover o serviço "${serviceName}"?`)) return;
-    await executeAdminSave(
-      (st) => ({
-        customServices: (st.customServices || []).filter((s: Service) => s.id !== serviceId),
-        deletedServices: [...(st.deletedServices || []), serviceId],
-        featured: st.featured.filter((id: string) => id !== serviceId),
-      }),
+    const prevImg =
+      store.serviceOverrides?.[serviceId]?.image ||
+      (store.customServices || []).find((s) => s.id === serviceId)?.image ||
+      "";
+    const ok = await executeAdminSave(
+      (st) => {
+        const nextRefs = { ...(st.assetRefs || {}) };
+        delete nextRefs[`service:${serviceId}`];
+        return {
+          customServices: (st.customServices || []).filter((s: Service) => s.id !== serviceId),
+          deletedServices: [...(st.deletedServices || []), serviceId],
+          featured: st.featured.filter((id: string) => id !== serviceId),
+          assetRefs: nextRefs,
+        };
+      },
       "Remoção de Serviço",
       `Serviço removido: ${serviceName}`
     );
+    if (ok && prevImg) {
+      await safeReplaceImage(prevImg, "");
+    }
   };
 
   const handleToggleFeaturedService = async (serviceId: string) => {
@@ -1012,6 +1223,16 @@ export function Admin({ initialTab }: { initialTab?: string }) {
       | "Entregue"
       | "Cancelada"
   ) => {
+    if (isSupabaseConfigured()) {
+      const sbRes = await updateSupabaseOrderStatus(orderId, { orderStatus });
+      if (!sbRes.ok) {
+        setSaveStatus({
+          message: `Falha ao atualizar encomenda ${orderId} no Supabase: ${sbRes.error || "Erro desconhecido"}`,
+          ok: false,
+        });
+        return;
+      }
+    }
     await executeAdminSave(
       (st) => ({
         productOrders: st.productOrders.map((o: any) =>
@@ -1106,12 +1327,12 @@ export function Admin({ initialTab }: { initialTab?: string }) {
           </p>
         </div>
 
-        {/* Global Persistence Status Indicator (PARTE 1) */}
+        {/* Global Persistence Status Indicator (Cloud-Verified) */}
         <div className="flex items-center gap-2">
           {isSaving ? (
             <div className="flex items-center gap-2 rounded-full bg-blue-500/10 border border-blue-500/30 px-3.5 py-1 text-xs font-bold text-blue-700 animate-pulse">
               <span className="size-2 rounded-full bg-blue-600 animate-ping" />
-              <span>A sincronizar com a base de dados...</span>
+              <span>A sincronizar com o Supabase...</span>
             </div>
           ) : saveStatus ? (
             <div
@@ -1124,10 +1345,33 @@ export function Admin({ initialTab }: { initialTab?: string }) {
               <Icon name={saveStatus.ok ? "Check" : "AlertTriangle"} className="size-3.5" />
               <span>{saveStatus.message}</span>
             </div>
-          ) : (
-            <div className="flex items-center gap-1.5 rounded-full bg-slate-100 dark:bg-slate-800 px-3 py-1 text-[11px] font-semibold text-slate-500 border border-border">
+          ) : !isSupabaseConfigured() ? (
+            <div
+              className="flex items-center gap-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 px-3 py-1 text-[11px] font-bold text-amber-800"
+              title="Configure VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY para ativar a sincronização na nuvem."
+            >
+              <span className="size-2 rounded-full bg-amber-500" />
+              <span>Supabase não configurado</span>
+            </div>
+          ) : store.realtimeStatus === "offline" ||
+            store.realtimeStatus === "error" ||
+            Boolean(store.cloudSyncError) ? (
+            <div
+              className="flex items-center gap-1.5 rounded-full bg-red-500/10 border border-red-500/30 px-3 py-1 text-[11px] font-bold text-red-700"
+              title={store.cloudSyncError || `Estado Realtime: ${store.realtimeStatus}`}
+            >
+              <span className="size-2 rounded-full bg-red-600" />
+              <span>Ligação indisponível</span>
+            </div>
+          ) : store.cloudSyncConfirmed && store.realtimeStatus === "subscribed" ? (
+            <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 px-3 py-1 text-[11px] font-bold text-emerald-800">
               <span className="size-2 rounded-full bg-emerald-500" />
-              <span>Sincronização Ativa em Disco</span>
+              <span>Sincronização Cloud Ativa</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 rounded-full bg-blue-500/10 border border-blue-500/30 px-3 py-1 text-[11px] font-semibold text-blue-700">
+              <span className="size-2 rounded-full bg-blue-500 animate-pulse" />
+              <span>A validar ligação Cloud...</span>
             </div>
           )}
         </div>
@@ -2153,11 +2397,15 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                           kind="ink"
                           className="min-h-10"
                           onClick={() =>
-                            setStore((s) => ({
-                              applications: s.applications.map((item, i) =>
-                                i === idx ? { ...item, status: "Aprovado" } : item
-                              ),
-                            }))
+                            executeAdminSave(
+                              (s) => ({
+                                applications: s.applications.map((item: any, i: number) =>
+                                  i === idx ? { ...item, status: "Aprovado" } : item
+                                ),
+                              }),
+                              "Aprovação de Candidatura de Parceiro",
+                              `Profissional ${a.name} aprovado`
+                            )
                           }
                         >
                           Aprovar Parceiro
@@ -2166,11 +2414,15 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                           kind="ghost"
                           className="min-h-10 text-destructive"
                           onClick={() =>
-                            setStore((s) => ({
-                              applications: s.applications.map((item, i) =>
-                                i === idx ? { ...item, status: "Rejeitado" } : item
-                              ),
-                            }))
+                            executeAdminSave(
+                              (s) => ({
+                                applications: s.applications.map((item: any, i: number) =>
+                                  i === idx ? { ...item, status: "Rejeitado" } : item
+                                ),
+                              }),
+                              "Rejeição de Candidatura de Parceiro",
+                              `Profissional ${a.name} rejeitado`
+                            )
                           }
                         >
                           Rejeitar
@@ -2627,27 +2879,19 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     const prevLogo = store.customLogo || "";
                     setLogoDeleting(true);
                     const ok = await executeAdminSave(
-                      () => ({ customLogo: "" }),
+                      (st) => {
+                        const nextRefs = { ...(st.assetRefs || {}) };
+                        delete nextRefs.customLogo;
+                        return { customLogo: "", assetRefs: nextRefs };
+                      },
                       "Restauração do Logótipo Original",
                       "Restaurado logótipo padrão original da Resolve Express"
                     );
                     if (ok) {
                       setLogoInput("");
-                      // Safe backend orphan cleanup
+                      setLogoAssetRef(null);
                       if (prevLogo) {
-                        try {
-                          await fetch("/api/storage/safe-replace-image", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                              oldUrl: prevLogo,
-                              newUrl: "",
-                              role: store.currentUser?.role,
-                            }),
-                          });
-                        } catch (err) {
-                          console.warn("Safe replace warning:", err);
-                        }
+                        await safeReplaceImage(prevLogo, "");
                       }
                     }
                     setLogoDeleting(false);
@@ -2667,9 +2911,43 @@ export function Admin({ initialTab }: { initialTab?: string }) {
               value={logoInput}
               onChange={(url) => {
                 setLogoInput(url);
+                setLogoDirty(true);
                 setLogoSaved(false);
               }}
-              helperText="Carregue ficheiro PNG transparente, SVG ou JPG. O ficheiro é enviado para o Supabase Storage ou servidor local com sincronização automática global."
+              assetCategory="logos"
+              assetTitle="Logótipo Oficial Resolve Express"
+              onAssetUploaded={async (asset) => {
+                const ref = buildAssetReference(asset, asset.public_url || undefined);
+                const uploadedUrl = asset.public_url || ref.url || "";
+                setLogoAssetRef(ref);
+                if (!uploadedUrl) return;
+                const prevLogo = store.customLogo || "";
+                const ok = await executeAdminSave(
+                  (st) => ({
+                    customLogo: uploadedUrl,
+                    assetRefs: {
+                      ...(st.assetRefs || {}),
+                      customLogo: ref,
+                    },
+                  }),
+                  "Atualização de Logótipo Oficial",
+                  `Logótipo enviado para ${asset.storage_path} e gravado em platform_settings`
+                );
+                if (ok) {
+                  setLogoInput(uploadedUrl);
+                  setLogoDirty(false);
+                  setLogoAssetRef(null);
+                  setLogoSaved(true);
+                  setTimeout(() => setLogoSaved(false), 4000);
+                  if (prevLogo && prevLogo !== uploadedUrl) {
+                    await safeReplaceImage(prevLogo, uploadedUrl);
+                  }
+                } else {
+                  setLogoInput(prevLogo);
+                  setLogoDirty(false);
+                }
+              }}
+              helperText="Carregue ficheiro PNG transparente, SVG ou JPG. O ficheiro é enviado para o bucket public-assets/super-admin/.../logos, registado em platform_assets e guardado automaticamente em platform_settings."
               aspectRatio="wide"
             />
 
@@ -2681,28 +2959,23 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                   const prevLogo = store.customLogo || "";
                   const targetUrl = logoInput.trim();
                   const ok = await executeAdminSave(
-                    () => ({ customLogo: targetUrl }),
+                    (st) => {
+                      const nextRefs = { ...(st.assetRefs || {}) };
+                      if (logoAssetRef) {
+                        nextRefs.customLogo = logoAssetRef;
+                      }
+                      return { customLogo: targetUrl, assetRefs: nextRefs };
+                    },
                     "Atualização de Logótipo Oficial",
                     `Logótipo atualizado: ${targetUrl.slice(0, 45)}...`
                   );
                   if (ok) {
+                    setLogoDirty(false);
+                    setLogoAssetRef(null);
                     setLogoSaved(true);
                     setTimeout(() => setLogoSaved(false), 4000);
-                    // Safe replacement on backend
                     if (prevLogo && prevLogo !== targetUrl) {
-                      try {
-                        await fetch("/api/storage/safe-replace-image", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            oldUrl: prevLogo,
-                            newUrl: targetUrl,
-                            role: store.currentUser?.role,
-                          }),
-                        });
-                      } catch (err) {
-                        console.warn("Safe replace warning:", err);
-                      }
+                      await safeReplaceImage(prevLogo, targetUrl);
                     }
                   }
                 }}
@@ -2719,7 +2992,688 @@ export function Admin({ initialTab }: { initialTab?: string }) {
             </div>
           </div>
 
-          {/* Card 2: WhatsApp Business & Operações */}
+          {/* Card 2: Documentos Públicos, Legais & Catálogos PDF */}
+          <div className="rounded-[var(--radius)] border border-border bg-paper p-6 space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/80 pb-3">
+              <div>
+                <span className="inline-block text-[11px] font-bold uppercase tracking-wider text-action font-mono">
+                  SUPABASE STORAGE · DOCUMENTOS GLOBAIS
+                </span>
+                <h3 className="font-display text-lg font-black text-primary">
+                  Documentos Públicos, Legais & Catálogos (PDF / Imagens)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => go("/documentos")}
+                className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs font-bold text-primary hover:bg-mist"
+              >
+                <Icon name="ExternalLink" className="size-3.5 text-action" />
+                Ver Página Pública (/documentos)
+              </button>
+            </div>
+
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Envie qualquer documento PDF ou imagem oficial (Termos, Privacidade, Tabelas de Preços, Catálogos ou Comunicados). O ficheiro é gravado no bucket <code className="font-mono text-primary">public-assets</code> do Supabase Storage, registado em <code className="font-mono text-primary">platform_assets</code> e sincronizado em tempo real para todos os navegadores e dispositivos.
+            </p>
+
+            <div className="grid gap-3 @2xl:grid-cols-2">
+              <Field label="Título do Documento">
+                <input
+                  type="text"
+                  value={docTitle}
+                  onChange={(e) => {
+                    setDocTitle(e.target.value);
+                    setDocSaved(false);
+                  }}
+                  placeholder="Ex.: Tabela de Preços Huambo 2026"
+                  className={inputCls}
+                />
+              </Field>
+              <Field label="Categoria / Secção de Destino">
+                <select
+                  value={docCategory}
+                  onChange={(e) => {
+                    setDocCategory(e.target.value);
+                    setDocSaved(false);
+                  }}
+                  className={inputCls}
+                >
+                  <option value="catalogo">Catálogo & Portfólio</option>
+                  <option value="tabela_precos">Tabela de Preços</option>
+                  <option value="comunicado">Comunicado Oficial</option>
+                  <option value="guia">Guia & Manual</option>
+                  <option value="outro">Outro Documento Público</option>
+                  {Object.entries(LEGAL_DOCS).map(([k, label]) => (
+                    <option key={k} value={k}>
+                      Legal · {label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            <Field label="Descrição Curta (opcional)">
+              <input
+                type="text"
+                value={docDescription}
+                onChange={(e) => setDocDescription(e.target.value)}
+                placeholder="Breve resumo do conteúdo do documento..."
+                className={inputCls}
+              />
+            </Field>
+
+            <DocumentUploader
+              value={docUploadMeta}
+              visibility="public"
+              assetCategory="general"
+              title={docTitle.trim() || undefined}
+              description={docDescription.trim() || undefined}
+              onChange={(meta) => {
+                setDocUploadMeta(meta);
+                setDocSaved(false);
+                if (meta && !docTitle.trim()) {
+                  setDocTitle(meta.fileName.replace(/\.[^.]+$/, ""));
+                }
+              }}
+            />
+
+            <div className="flex flex-wrap items-center gap-3">
+              <Btn
+                kind="action"
+                disabled={isSaving || !docUploadMeta?.url || !docTitle.trim()}
+                onClick={async () => {
+                  if (!docUploadMeta?.url || !docTitle.trim()) return;
+                  const newDoc: PublicDocumentRecord = {
+                    id: `DOC-${Date.now()}`,
+                    assetId: docUploadMeta.assetId,
+                    title: docTitle.trim(),
+                    category: docCategory,
+                    description: docDescription.trim() || undefined,
+                    fileUrl: docUploadMeta.url,
+                    fileName: docUploadMeta.fileName,
+                    fileType: docUploadMeta.fileType,
+                    fileSize: docUploadMeta.fileSize,
+                    bucket: docUploadMeta.bucket || "public-assets",
+                    storagePath: docUploadMeta.storagePath,
+                    visibility: "public",
+                    active: true,
+                    uploadedBy: store.currentUser?.name || "Administrador",
+                    createdAt: new Date().toISOString().slice(0, 10),
+                  };
+
+                  const ok = await executeAdminSave(
+                    (st) => {
+                      const nextRefs = { ...(st.assetRefs || {}) };
+                      if (docUploadMeta.storagePath) {
+                        nextRefs[`publicDoc:${newDoc.id}`] = {
+                          asset_id: docUploadMeta.assetId,
+                          bucket_id: docUploadMeta.bucket || "public-assets",
+                          storage_path: docUploadMeta.storagePath,
+                          url: docUploadMeta.url,
+                          mime_type: docUploadMeta.fileType,
+                          file_size: docUploadMeta.fileSize,
+                        };
+                      }
+                      return {
+                        publicDocuments: [newDoc, ...(st.publicDocuments || [])],
+                        assetRefs: nextRefs,
+                      };
+                    },
+                    "Publicação de Documento Público",
+                    `${newDoc.title} (${newDoc.fileName})`
+                  );
+
+                  if (ok) {
+                    setDocTitle("");
+                    setDocDescription("");
+                    setDocUploadMeta(null);
+                    setDocSaved(true);
+                    setTimeout(() => setDocSaved(false), 4000);
+                  }
+                }}
+              >
+                <Icon name="UploadCloud" className="size-4" />
+                Publicar Documento Globalmente
+              </Btn>
+
+              {docSaved && (
+                <span className="flex items-center gap-1 text-xs font-bold text-ok">
+                  <Icon name="Check" className="size-4" /> Documento publicado para todos os dispositivos!
+                </span>
+              )}
+            </div>
+
+            {/* Published Documents List */}
+            {(store.publicDocuments || []).length > 0 && (
+              <div className="space-y-2 pt-2 border-t border-border/80">
+                <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  Documentos Publicados ({store.publicDocuments.length})
+                </p>
+                <div className="space-y-2">
+                  {store.publicDocuments.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-mist/30 p-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="size-9 shrink-0 rounded-lg bg-action/10 text-action grid place-items-center">
+                          <Icon
+                            name={doc.fileType === "application/pdf" ? "FileText" : "Image"}
+                            className="size-4"
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-xs font-bold text-primary truncate">{doc.title}</p>
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                doc.active
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-slate-200 text-slate-600"
+                              }`}
+                            >
+                              {doc.active ? "Visível" : "Oculto"}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground font-mono truncate">
+                            {LEGAL_DOCS[doc.category] || doc.category} · {doc.fileName}
+                            {doc.fileSize ? ` · ${formatBytes(doc.fileSize)}` : ""}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <a
+                          href={doc.fileUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="rounded-lg border border-border bg-paper px-2.5 py-1 text-[11px] font-bold text-primary hover:bg-mist"
+                        >
+                          Abrir
+                        </a>
+                        <button
+                          type="button"
+                          disabled={isSaving}
+                          onClick={async () => {
+                            await executeAdminSave(
+                              (st) => ({
+                                publicDocuments: (st.publicDocuments || []).map((d: PublicDocumentRecord) =>
+                                  d.id === doc.id ? { ...d, active: !d.active } : d
+                                ),
+                              }),
+                              "Visibilidade de Documento",
+                              `${doc.title}: ${!doc.active ? "Visível" : "Oculto"}`
+                            );
+                          }}
+                          className="rounded-lg border border-border bg-paper px-2.5 py-1 text-[11px] font-bold text-foreground hover:bg-mist"
+                        >
+                          {doc.active ? "Ocultar" : "Mostrar"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isSaving}
+                          onClick={async () => {
+                            const ok = await executeAdminSave(
+                              (st) => {
+                                const nextRefs = { ...(st.assetRefs || {}) };
+                                delete nextRefs[`publicDoc:${doc.id}`];
+                                return {
+                                  publicDocuments: (st.publicDocuments || []).filter(
+                                    (d: PublicDocumentRecord) => d.id !== doc.id
+                                  ),
+                                  assetRefs: nextRefs,
+                                };
+                              },
+                              "Remoção de Documento Público",
+                              `Removido: ${doc.title}`
+                            );
+                            if (ok) {
+                              if (doc.assetId && isSupabaseConfigured()) {
+                                await deletePlatformAsset(doc.assetId, { force: true });
+                              } else if (doc.fileUrl) {
+                                await safeReplaceImage(doc.fileUrl, "");
+                              }
+                            }
+                          }}
+                          className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-bold text-red-700 hover:bg-red-100"
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Card 2B: Documentos Administrativos Privados (admin-documents) + Repositório Central platform_assets (Realtime) */}
+          <div className="rounded-[var(--radius)] border border-border bg-paper p-6 space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/80 pb-3">
+              <div>
+                <span className="inline-block text-[11px] font-bold uppercase tracking-wider text-action font-mono">
+                  ADMIN-DOCUMENTS (PRIVADO) · PLATFORM_ASSETS · REALTIME
+                </span>
+                <h3 className="font-display text-lg font-black text-primary">
+                  Gestão Central de Ficheiros & Documentos Privados
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                    store.realtimeStatus === "subscribed"
+                      ? "bg-emerald-100 text-emerald-800"
+                      : store.realtimeStatus === "connecting" || store.realtimeStatus === "reconnecting"
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-slate-100 text-slate-700"
+                  }`}
+                >
+                  <span
+                    className={`size-2 rounded-full ${
+                      store.realtimeStatus === "subscribed"
+                        ? "bg-emerald-600"
+                        : store.realtimeStatus === "connecting" || store.realtimeStatus === "reconnecting"
+                        ? "bg-amber-500 animate-pulse"
+                        : "bg-slate-400"
+                    }`}
+                  />
+                  {store.realtimeStatus === "subscribed"
+                    ? "Realtime Ativo"
+                    : store.realtimeStatus === "connecting" || store.realtimeStatus === "reconnecting"
+                    ? "A sincronizar..."
+                    : isSupabaseConfigured()
+                    ? "Ligação Realtime"
+                    : "Modo Preview Local"}
+                </span>
+                {isSupabaseConfigured() && (
+                  <button
+                    type="button"
+                    onClick={() => refreshPlatformAssetsSnapshot()}
+                    className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs font-bold text-primary hover:bg-mist"
+                    title="Atualizar lista de ficheiros a partir do Supabase"
+                  >
+                    <Icon name="RefreshCw" className="size-3.5 text-action" />
+                    Atualizar
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Carregue contratos internos, relatórios financeiros, faturas e documentos confidenciais para o bucket privado <code className="font-mono text-primary">admin-documents</code>. Estes ficheiros nunca recebem link público e são acedidos apenas pelo Super Admin através de URLs assinados temporários.
+            </p>
+
+            <div className="grid gap-3 @2xl:grid-cols-2">
+              <Field label="Título do Documento Privado">
+                <input
+                  type="text"
+                  value={privDocTitle}
+                  onChange={(e) => setPrivDocTitle(e.target.value)}
+                  placeholder="Ex.: Contrato Fornecedor Huambo 2026"
+                  className={inputCls}
+                />
+              </Field>
+              <Field label="Pasta / Categoria Interna">
+                <select
+                  value={privDocCategory}
+                  onChange={(e) => setPrivDocCategory(e.target.value as AdminDocCategory)}
+                  className={inputCls}
+                >
+                  <option value="contracts">Contratos (contracts)</option>
+                  <option value="reports">Relatórios (reports)</option>
+                  <option value="invoices">Faturas & Comprovativos (invoices)</option>
+                  <option value="general">Documentação Geral (general)</option>
+                </select>
+              </Field>
+            </div>
+
+            <Field label="Notas / Descrição Interna (opcional)">
+              <input
+                type="text"
+                value={privDocDescription}
+                onChange={(e) => setPrivDocDescription(e.target.value)}
+                placeholder="Referência de contrato, mês ou observação confidencial..."
+                className={inputCls}
+              />
+            </Field>
+
+            <DocumentUploader
+              label="Enviar Documento Privado para admin-documents (PDF, JPG, PNG, WebP)"
+              value={privDocMeta}
+              visibility="private"
+              assetCategory={privDocCategory}
+              title={privDocTitle.trim() || undefined}
+              description={privDocDescription.trim() || undefined}
+              allowExternalUrl={false}
+              helperText="Guardado em admin-documents/super-admin/{user_id}/... com visibility = 'private' em platform_assets."
+              onChange={(meta) => {
+                setPrivDocMeta(meta);
+                if (meta && !privDocTitle.trim()) {
+                  setPrivDocTitle(meta.fileName.replace(/\.[^.]+$/, ""));
+                }
+              }}
+              onAssetUploaded={(asset: PlatformAsset) => {
+                setAssetActionFeedback({
+                  message: `Documento privado "${asset.title || asset.file_name}" registado em platform_assets e sincronizado via Realtime.`,
+                  ok: true,
+                });
+                setPrivDocTitle("");
+                setPrivDocDescription("");
+              }}
+            />
+
+            {assetActionFeedback && (
+              <div
+                className={`rounded-lg border px-3 py-2 text-xs font-semibold flex items-center gap-2 ${
+                  assetActionFeedback.ok
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-red-200 bg-red-50 text-red-700"
+                }`}
+              >
+                <Icon
+                  name={assetActionFeedback.ok ? "CheckCircle2" : "AlertCircle"}
+                  className="size-4 shrink-0"
+                />
+                <span>{assetActionFeedback.message}</span>
+              </div>
+            )}
+
+            {/* Controlled Migration Helper (if legacy localStorage admin data exists) */}
+            {isSupabaseConfigured() &&
+              (() => {
+                const legacyCheck = inspectLocalLegacyAdminState();
+                if (!legacyCheck.hasLegacyData && !migrationResult) return null;
+                return (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                          <Icon name="Database" className="size-4 text-amber-700" />
+                          Migração Controlada de Dados Locais para Supabase
+                        </p>
+                        <p className="text-[11px] text-amber-800">
+                          {legacyCheck.hasLegacyData
+                            ? `Detetadas ${legacyCheck.migratableKeys.length} chave(s) locais (${legacyCheck.migratableKeys.join(", ")}). ${
+                                legacyCheck.hasBase64OrBlob
+                                  ? `${legacyCheck.skippedTransientAssets.length} imagem(ns) Base64/blob serão ignoradas com aviso.`
+                                  : "Sem imagens Base64."
+                              }`
+                            : "Cache local verificado."}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={migratingLocal}
+                        onClick={async () => {
+                          setMigratingLocal(true);
+                          const res = await migrateLocalAdminDataToSupabase();
+                          setMigrationResult(res);
+                          setMigratingLocal(false);
+                        }}
+                        className="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-800 disabled:opacity-50"
+                      >
+                        {migratingLocal ? "A migrar..." : "Sincronizar & Limpar Cache Local"}
+                      </button>
+                    </div>
+                    {migrationResult && (
+                      <div className="text-[11px] text-amber-900 space-y-1 border-t border-amber-200 pt-2">
+                        <p className="font-bold">
+                          {migrationResult.ok
+                            ? `Migração concluída (${migrationResult.migratedKeys.length} chaves enviadas${
+                                migrationResult.cleanedLocalCache ? " · cache local limpo" : ""
+                              }).`
+                            : `Erro na migração: ${migrationResult.error}`}
+                        </p>
+                        {migrationResult.skippedTransientAssets.length > 0 && (
+                          <p className="text-amber-800">
+                            Itens locais em Base64/blob que requerem novo upload:{" "}
+                            {migrationResult.skippedTransientAssets
+                              .map((s) => s.location)
+                              .join(", ")}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+            {/* Live platform_assets Table */}
+            <div className="space-y-3 pt-2 border-t border-border/80">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  Registo Global platform_assets ({(store.platformAssets || []).length})
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {(
+                    [
+                      ["all", "Todos"],
+                      ["public-assets", "Públicos (public-assets)"],
+                      ["admin-documents", "Privados (admin-documents)"],
+                      ["partner-documents", "Parceiros (partner-documents)"],
+                    ] as const
+                  ).map(([val, lbl]) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setAssetFilterBucket(val)}
+                      className={`rounded-lg px-2.5 py-1 text-[11px] font-bold border transition ${
+                        assetFilterBucket === val
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-paper text-foreground border-border hover:bg-mist"
+                      }`}
+                    >
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {(store.platformAssets || []).filter(
+                (a) => assetFilterBucket === "all" || a.bucket_id === assetFilterBucket
+              ).length === 0 ? (
+                <p className="text-xs text-muted-foreground py-3">
+                  {isSupabaseConfigured()
+                    ? "Nenhum ficheiro registado em platform_assets para este filtro ainda."
+                    : "Ligue o projeto ao Supabase para listar e sincronizar registos de platform_assets em tempo real."}
+                </p>
+              ) : (
+                <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                  {(store.platformAssets || [])
+                    .filter((a) => assetFilterBucket === "all" || a.bucket_id === assetFilterBucket)
+                    .map((asset) => {
+                      const isPrivateAsset = asset.visibility === "private" || asset.bucket_id !== "public-assets";
+                      const isBusy = assetActionBusyId === asset.id;
+                      return (
+                        <div
+                          key={asset.id}
+                          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-mist/30 p-3"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="size-9 shrink-0 rounded-lg bg-action/10 text-action grid place-items-center">
+                              <Icon
+                                name={
+                                  asset.mime_type === "application/pdf"
+                                    ? "FileText"
+                                    : isPrivateAsset
+                                    ? "Lock"
+                                    : "Image"
+                                }
+                                className="size-4"
+                              />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <p className="text-xs font-bold text-primary truncate">
+                                  {asset.title || asset.file_name}
+                                </p>
+                                <span
+                                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                    isPrivateAsset
+                                      ? "bg-amber-100 text-amber-900"
+                                      : "bg-emerald-100 text-emerald-800"
+                                  }`}
+                                >
+                                  {isPrivateAsset ? "Privado" : "Público"}
+                                </span>
+                                <span className="rounded bg-paper border border-border px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
+                                  {asset.bucket_id}/{asset.category}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground font-mono truncate">
+                                {asset.file_name} · {formatBytes(asset.file_size)} ·{" "}
+                                {asset.storage_path}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            {!isPrivateAsset && asset.public_url ? (
+                              <a
+                                href={asset.public_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="rounded-lg border border-border bg-paper px-2.5 py-1 text-[11px] font-bold text-primary hover:bg-mist"
+                              >
+                                Abrir
+                              </a>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={async () => {
+                                  setAssetActionFeedback(null);
+                                  setAssetActionBusyId(asset.id);
+                                  const signed = await getPrivateAssetSignedUrl(
+                                    asset.bucket_id as "admin-documents" | "partner-documents" | "payment-proofs",
+                                    asset.storage_path,
+                                    300
+                                  );
+                                  setAssetActionBusyId(null);
+                                  if (signed.ok && signed.signedUrl) {
+                                    setActiveSignedPreview({
+                                      id: asset.id,
+                                      title: asset.title || asset.file_name,
+                                      url: signed.signedUrl,
+                                      mimeType: asset.mime_type,
+                                      isPrivate: isPrivateAsset,
+                                    });
+                                  } else {
+                                    setAssetActionFeedback({
+                                      message: signed.error || "Não foi possível gerar o link temporário.",
+                                      ok: false,
+                                    });
+                                  }
+                                }}
+                                className="rounded-lg border border-border bg-paper px-2.5 py-1 text-[11px] font-bold text-primary hover:bg-mist disabled:opacity-50"
+                              >
+                                {isBusy ? "A gerar link..." : "Pré-visualizar (Link Temporário)"}
+                              </button>
+                            )}
+
+                            {confirmDeleteAssetId === asset.id ? (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={async () => {
+                                    setConfirmDeleteAssetId(null);
+                                    setAssetActionBusyId(asset.id);
+                                    setAssetActionFeedback(null);
+                                    const delRes = await deletePlatformAsset(asset.id);
+                                    setAssetActionBusyId(null);
+                                    if (delRes.ok) {
+                                      if (activeSignedPreview?.id === asset.id) {
+                                        setActiveSignedPreview(null);
+                                      }
+                                      setAssetActionFeedback({
+                                        message: "Ficheiro eliminado de platform_assets e Supabase Storage.",
+                                        ok: true,
+                                      });
+                                    } else {
+                                      setAssetActionFeedback({
+                                        message: delRes.error || "Falha ao eliminar ficheiro.",
+                                        ok: false,
+                                      });
+                                    }
+                                  }}
+                                  className="rounded-lg bg-red-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-red-700 disabled:opacity-50"
+                                >
+                                  Confirmar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteAssetId(null)}
+                                  className="rounded-lg border border-border bg-paper px-2 py-1 text-[11px] font-bold text-muted-foreground hover:bg-mist"
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => setConfirmDeleteAssetId(asset.id)}
+                                className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-bold text-red-700 hover:bg-red-100 disabled:opacity-50"
+                              >
+                                Eliminar
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+
+              {activeSignedPreview && (
+                <div className="rounded-xl border border-primary/20 bg-paper p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-primary truncate">
+                        {activeSignedPreview.title}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Link assinado temporário (válido por 300 segundos) · Acesso exclusivo Super Admin
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <a
+                        href={activeSignedPreview.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-lg bg-primary px-3 py-1.5 text-[11px] font-bold text-primary-foreground hover:bg-primary/90"
+                      >
+                        Abrir em Nova Aba
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setActiveSignedPreview(null)}
+                        className="rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-bold text-muted-foreground hover:bg-mist"
+                      >
+                        Fechar
+                      </button>
+                    </div>
+                  </div>
+                  {activeSignedPreview.mimeType.startsWith("image/") ? (
+                    <img
+                      src={activeSignedPreview.url}
+                      alt={activeSignedPreview.title}
+                      className="max-h-72 rounded-lg border border-border object-contain mx-auto bg-mist/30"
+                    />
+                  ) : activeSignedPreview.mimeType === "application/pdf" ? (
+                    <iframe
+                      src={activeSignedPreview.url}
+                      title={activeSignedPreview.title}
+                      className="w-full h-80 rounded-lg border border-border bg-white"
+                    />
+                  ) : null}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Card 3: WhatsApp Business & Operações */}
           <div className="rounded-[var(--radius)] border border-border bg-paper p-6 space-y-5">
             <div className="border-b border-border/80 pb-3">
               <span className="inline-block text-[11px] font-bold uppercase tracking-wider text-action font-mono">
@@ -3284,8 +4238,13 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     onChange={setNewProdImg}
                     fitMode={newProdImgFit}
                     onFitModeChange={setNewProdImgFit}
+                    assetCategory="products"
+                    assetTitle={newProdName.trim() || undefined}
+                    onAssetUploaded={(asset) =>
+                      setNewProdAssetRef(buildAssetReference(asset, asset.public_url || undefined))
+                    }
                     label="Imagem do Produto"
-                    helperText="Carregue uma foto do telemóvel/computador ou insira um link. O sistema adapta-se automaticamente a fotos verticais ou horizontais."
+                    helperText="Carregue uma foto do telemóvel/computador ou insira um link. Gravado em public-assets/super-admin/.../products."
                   />
 
                   <Field label="Descrição Detalhada">
@@ -3449,14 +4408,19 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                   <ImageUploader
                     value={editingProduct.image}
                     onChange={(img) =>
-                      setEditingProduct({ ...editingProduct, image: img })
+                      setEditingProduct((prev) => (prev ? { ...prev, image: img } : prev))
                     }
                     fitMode={editingProduct.imageFit || "cover"}
                     onFitModeChange={(fit) =>
-                      setEditingProduct({ ...editingProduct, imageFit: fit })
+                      setEditingProduct((prev) => (prev ? { ...prev, imageFit: fit } : prev))
+                    }
+                    assetCategory="products"
+                    assetTitle={editingProduct.name.trim() || undefined}
+                    onAssetUploaded={(asset) =>
+                      setEditProdAssetRef(buildAssetReference(asset, asset.public_url || undefined))
                     }
                     label="Imagem do Produto"
-                    helperText="Carregue uma foto do telemóvel/computador ou insira um link. O sistema adapta-se automaticamente a fotos verticais ou horizontais."
+                    helperText="Carregue uma foto do telemóvel/computador ou insira um link. Gravado em public-assets/super-admin/.../products."
                   />
 
                   <Field label="Descrição">
@@ -3767,8 +4731,13 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                 onChange={setNewSvcImg}
                 fitMode={newSvcImgFit}
                 onFitModeChange={setNewSvcImgFit}
+                assetCategory="services"
+                assetTitle={newSvcName.trim() || undefined}
+                onAssetUploaded={(asset) =>
+                  setNewSvcAssetRef(buildAssetReference(asset, asset.public_url || undefined))
+                }
                 label="Imagem do Serviço"
-                helperText="Upload por ficheiro ou link. A imagem adapta-se automaticamente em todos os cartões e cabeçalhos de serviço."
+                helperText="Upload por ficheiro ou link. Gravado em public-assets/super-admin/.../services."
               />
 
               <Field label="Descrição Detalhada do Serviço">
@@ -3892,8 +4861,13 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                 onChange={setEditSvcImg}
                 fitMode={editSvcImgFit}
                 onFitModeChange={setEditSvcImgFit}
+                assetCategory="services"
+                assetTitle={editSvcName.trim() || undefined}
+                onAssetUploaded={(asset) =>
+                  setEditSvcAssetRef(buildAssetReference(asset, asset.public_url || undefined))
+                }
                 label="Imagem do Serviço"
-                helperText="Upload por ficheiro ou link. A imagem adapta-se automaticamente em todos os cartões e cabeçalhos de serviço."
+                helperText="Upload por ficheiro ou link. Gravado em public-assets/super-admin/.../services."
               />
 
               <Field label="Descrição">
@@ -4018,11 +4992,16 @@ export function Admin({ initialTab }: { initialTab?: string }) {
               <ImageUploader
                 value={editingDepartment.image}
                 onChange={(img) =>
-                  setEditingDepartment({ ...editingDepartment, image: img })
+                  setEditingDepartment((prev) => (prev ? { ...prev, image: img } : prev))
                 }
                 fitMode={editingDepartment.imageFit}
                 onFitModeChange={(fit) =>
-                  setEditingDepartment({ ...editingDepartment, imageFit: fit })
+                  setEditingDepartment((prev) => (prev ? { ...prev, imageFit: fit } : prev))
+                }
+                assetCategory="general"
+                assetTitle={editingDepartment.name.trim() || undefined}
+                onAssetUploaded={(asset) =>
+                  setDeptAssetRef(buildAssetReference(asset, asset.public_url || undefined))
                 }
                 label="Imagem de Capa do Departamento"
                 helperText="O sistema adapta esta imagem automaticamente para cabeçalhos, banners da Home e grelhas de serviços."
@@ -4323,8 +5302,13 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                 onChange={(img) => setHeroFormImage(img)}
                 fitMode={heroFormImageFit}
                 onFitModeChange={(fit) => setHeroFormImageFit(fit)}
+                assetCategory="banners"
+                assetTitle={`${heroFormTitleStart} ${heroFormTitleHighlight}`.trim() || "Hero Banner"}
+                onAssetUploaded={(asset) =>
+                  setHeroFormAssetRef(buildAssetReference(asset, asset.public_url || undefined))
+                }
                 label="Imagem do Banner (Upload por Ficheiro ou Link Web)"
-                helperText="O sistema adapta automaticamente a imagem ao carrossel de ecrãs de computador e telemóveis."
+                helperText="Gravado em public-assets/super-admin/.../banners com sincronização em tempo real."
                 aspectRatio="video"
               />
 

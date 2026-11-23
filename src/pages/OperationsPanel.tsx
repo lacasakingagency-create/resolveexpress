@@ -12,9 +12,34 @@ import {
   type SupportTicket,
 } from "../lib/store";
 import { formatCurrency, kz } from "../lib/store";
+import {
+  isSupabaseConfigured,
+  updateSupabaseBookingStatus,
+  updateSupabaseOrderStatus,
+} from "../lib/supabase";
+
+const BOOKING_TRANSITIONS: Record<BookingRecord["status"], Array<BookingRecord["status"]>> = {
+  Recebido: ["Confirmado", "Em curso", "Cancelado"],
+  Confirmado: ["Em curso", "Concluído", "Cancelado"],
+  "Em curso": ["Concluído", "Cancelado"],
+  Concluído: [],
+  Cancelado: [],
+};
+
+const ORDER_TRANSITIONS: Record<
+  ProductOrderRecord["orderStatus"],
+  Array<ProductOrderRecord["orderStatus"]>
+> = {
+  Recebida: ["Confirmada", "Em preparação", "Cancelada"],
+  Confirmada: ["Em preparação", "A caminho", "Cancelada"],
+  "Em preparação": ["A caminho", "Cancelada"],
+  "A caminho": ["Entregue", "Cancelada"],
+  Entregue: [],
+  Cancelada: [],
+};
 
 export function OperationsPanel({ initialTab }: { initialTab?: string }) {
-  const [store, setStore] = useStore();
+  const [store] = useStore();
   const [activeTab, setActiveTab] = useState<
     "visao" | "servicos" | "logistica" | "praca" | "importacoes" | "intermediario" | "ocorrencias"
   >(
@@ -23,9 +48,8 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
 
   // Filters & State
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("TODOS");
   const [isSaving, setIsSaving] = useState(false);
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [toastState, setToastState] = useState<{ msg: string; ok: boolean } | null>(null);
 
   // Modal State for New Occurrence
   const [showOccurrenceModal, setShowOccurrenceModal] = useState(false);
@@ -63,10 +87,43 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
     reason: string;
   } | null>(null);
 
-  const showToast = (msg: string) => {
-    setToastMsg(msg);
-    setTimeout(() => setToastMsg(null), 3500);
+  const showToast = (msg: string, ok = true) => {
+    setToastState({ msg, ok });
+    setTimeout(() => setToastState(null), 4000);
   };
+
+  const availableStaffOptions = useMemo(() => {
+    const internal = (store.employees || [])
+      .filter((em) => em.active !== false)
+      .map((em) => ({
+        key: `emp:${em.id}`,
+        label: `${em.name} (${em.role})`,
+        staffId: em.id,
+        partnerId: undefined as string | undefined,
+      }));
+    const approvedApps = (store.applications || [])
+      .filter((a) => a.status === "Aprovado")
+      .map((a, idx) => ({
+        key: `app:${a.id || a.phone || idx}`,
+        label: `${a.name} (Profissional Credenciado)`,
+        staffId: a.id,
+        partnerId: a.id,
+      }));
+    const approvedPartners = (store.registeredPartners || [])
+      .filter((p) => p.status === "Aprovado")
+      .map((p) => ({
+        key: `partner:${p.id}`,
+        label: `${p.commercialName} (Empresa Parceira)`,
+        staffId: p.id,
+        partnerId: p.id,
+      }));
+    return {
+      internal,
+      approvedApps,
+      approvedPartners,
+      all: [...internal, ...approvedApps, ...approvedPartners],
+    };
+  }, [store.employees, store.applications, store.registeredPartners]);
 
   // KPI Calculations
   const metrics = useMemo(() => {
@@ -99,10 +156,17 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
       openOccurrences,
       importPending,
       intermediaryInspections,
-      activeDrivers: 6,
+      activeDrivers: availableStaffOptions.internal.length || 0,
       punctualityRate: "98.2%",
     };
-  }, [store.bookings, store.productOrders, store.operationalOccurrences, store.importQuotes, store.intermediaryListings]);
+  }, [
+    store.bookings,
+    store.productOrders,
+    store.operationalOccurrences,
+    store.importQuotes,
+    store.intermediaryListings,
+    availableStaffOptions.internal.length,
+  ]);
 
   // Actions
   const handleUpdateBookingStatus = async (
@@ -110,8 +174,32 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
     newStatus: BookingRecord["status"],
     note?: string
   ) => {
+    const current = store.bookings.find((b) => b.id === bookingId);
+    if (!current || current.status === newStatus) return;
+
+    const allowed = BOOKING_TRANSITIONS[current.status] || [];
+    if (!allowed.includes(newStatus)) {
+      showToast(
+        `Transição inválida de "${current.status}" para "${newStatus}" no serviço ${bookingId}.`,
+        false
+      );
+      return;
+    }
+
     setIsSaving(true);
-    await saveAdminStateAsync(
+    if (isSupabaseConfigured()) {
+      const sbRes = await updateSupabaseBookingStatus(bookingId, { status: newStatus });
+      if (!sbRes.ok) {
+        setIsSaving(false);
+        showToast(
+          `Falha ao atualizar serviço ${bookingId} no Supabase: ${sbRes.error || "Erro desconhecido"}`,
+          false
+        );
+        return;
+      }
+    }
+
+    const res = await saveAdminStateAsync(
       (st) => ({
         bookings: st.bookings.map((b) =>
           b.id === bookingId
@@ -134,6 +222,10 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
       `Serviço ${bookingId} alterado para ${newStatus}`
     );
     setIsSaving(false);
+    if (!res.ok) {
+      showToast(res.error || `Falha ao persistir estado do serviço ${bookingId}.`, false);
+      return;
+    }
     showToast(`Estado do serviço ${bookingId} atualizado para ${newStatus}.`);
   };
 
@@ -141,8 +233,32 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
     orderId: string,
     newStatus: ProductOrderRecord["orderStatus"]
   ) => {
+    const current = store.productOrders.find((o) => o.id === orderId);
+    if (!current || current.orderStatus === newStatus) return;
+
+    const allowed = ORDER_TRANSITIONS[current.orderStatus] || [];
+    if (!allowed.includes(newStatus)) {
+      showToast(
+        `Transição inválida de "${current.orderStatus}" para "${newStatus}" na encomenda ${orderId}.`,
+        false
+      );
+      return;
+    }
+
     setIsSaving(true);
-    await saveAdminStateAsync(
+    if (isSupabaseConfigured()) {
+      const sbRes = await updateSupabaseOrderStatus(orderId, { orderStatus: newStatus });
+      if (!sbRes.ok) {
+        setIsSaving(false);
+        showToast(
+          `Falha ao atualizar encomenda ${orderId} no Supabase: ${sbRes.error || "Erro desconhecido"}`,
+          false
+        );
+        return;
+      }
+    }
+
+    const res = await saveAdminStateAsync(
       (st) => ({
         productOrders: st.productOrders.map((o) =>
           o.id === orderId ? { ...o, orderStatus: newStatus } : o
@@ -152,28 +268,56 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
       `Encomenda ${orderId} atualizada para ${newStatus}`
     );
     setIsSaving(false);
+    if (!res.ok) {
+      showToast(res.error || `Falha ao persistir estado da encomenda ${orderId}.`, false);
+      return;
+    }
     showToast(`Encomenda ${orderId} atualizada para ${newStatus}.`);
   };
 
   const handleAssignStaff = async () => {
     if (!assignModal || !selectedStaff) return;
+    const chosen = availableStaffOptions.all.find((opt) => opt.key === selectedStaff);
+    const assignedLabel = chosen?.label || selectedStaff;
     setIsSaving(true);
 
     if (assignModal.targetType === "BOOKING") {
-      await saveAdminStateAsync(
+      const currentBooking = store.bookings.find((b) => b.id === assignModal.id);
+      const nextStatus =
+        currentBooking?.status === "Recebido" ? "Confirmado" : currentBooking?.status;
+
+      if (isSupabaseConfigured()) {
+        const sbRes = await updateSupabaseBookingStatus(assignModal.id, {
+          assignedTo: assignedLabel,
+          partnerId: chosen?.partnerId || null,
+          status: nextStatus,
+        });
+        if (!sbRes.ok) {
+          setIsSaving(false);
+          showToast(
+            `Falha ao atribuir técnico no Supabase: ${sbRes.error || "Erro desconhecido"}`,
+            false
+          );
+          return;
+        }
+      }
+
+      const res = await saveAdminStateAsync(
         (st) => ({
           bookings: st.bookings.map((b) =>
             b.id === assignModal.id
               ? {
                   ...b,
-                  assignedTo: selectedStaff,
+                  assignedTo: assignedLabel,
+                  assignedStaffId: chosen?.staffId,
+                  partnerId: chosen?.partnerId,
                   status: b.status === "Recebido" ? "Confirmado" : b.status,
                   history: [
                     ...b.history,
                     {
                       at: new Date().toISOString(),
-                      status: b.status,
-                      note: `Técnico responsável atribuído: ${selectedStaff}`,
+                      status: b.status === "Recebido" ? "Confirmado" : b.status,
+                      note: `Técnico responsável atribuído: ${assignedLabel}`,
                     },
                   ],
                 }
@@ -181,16 +325,39 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
           ),
         }),
         "ASSIGN_BOOKING_STAFF",
-        `Técnico ${selectedStaff} alocado a ${assignModal.id}`
+        `Técnico ${assignedLabel} alocado a ${assignModal.id}`
       );
+      setIsSaving(false);
+      if (!res.ok) {
+        showToast(res.error || "Falha ao persistir atribuição técnica.", false);
+        return;
+      }
+      showToast(`Técnico ${assignedLabel} alocado ao serviço ${assignModal.id}.`);
     } else {
-      showToast(`Estafeta ${selectedStaff} alocado à entrega ${assignModal.id}.`);
+      const res = await saveAdminStateAsync(
+        (st) => ({
+          productOrders: st.productOrders.map((o) =>
+            o.id === assignModal.id
+              ? {
+                  ...o,
+                  assignedDriver: assignedLabel,
+                }
+              : o
+          ),
+        }),
+        "ASSIGN_ORDER_COURIER",
+        `Estafeta ${assignedLabel} alocado à encomenda ${assignModal.id}`
+      );
+      setIsSaving(false);
+      if (!res.ok) {
+        showToast(res.error || "Falha ao persistir alocação do estafeta.", false);
+        return;
+      }
+      showToast(`Estafeta ${assignedLabel} alocado à entrega ${assignModal.id}.`);
     }
 
-    setIsSaving(false);
     setAssignModal(null);
     setSelectedStaff("");
-    showToast("Atribuição técnica guardada com sucesso.");
   };
 
   const handleCreateOccurrence = async (e: React.FormEvent) => {
@@ -207,13 +374,13 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
       relatedId: newOccurrence.relatedId.trim() || "N/A",
       severity: newOccurrence.severity,
       status: "ABERTA",
-      assignedStaff: store.currentUser?.name || "Eng. Marcos Baptista",
+      assignedStaff: store.currentUser?.name || "Equipa de Operações",
       driverOrTechName: newOccurrence.driverOrTechName.trim() || undefined,
       createdAt: new Date().toISOString(),
     };
 
     setIsSaving(true);
-    await saveAdminStateAsync(
+    const res = await saveAdminStateAsync(
       (st) => ({
         operationalOccurrences: [occ, ...(st.operationalOccurrences || [])],
       }),
@@ -221,6 +388,10 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
       `Ocorrência ${occId} criada: ${occ.title}`
     );
     setIsSaving(false);
+    if (!res.ok) {
+      showToast(res.error || `Falha ao registar ocorrência ${occId}.`, false);
+      return;
+    }
     setShowOccurrenceModal(false);
     setNewOccurrence({
       type: "ATRASO_ENTREGA",
@@ -240,7 +411,7 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
     resNote?: string
   ) => {
     setIsSaving(true);
-    await saveAdminStateAsync(
+    const res = await saveAdminStateAsync(
       (st) => ({
         operationalOccurrences: (st.operationalOccurrences || []).map((o) =>
           o.id === occId
@@ -257,6 +428,10 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
       `Ocorrência ${occId} -> ${newStatus}`
     );
     setIsSaving(false);
+    if (!res.ok) {
+      showToast(res.error || `Falha ao atualizar ocorrência ${occId}.`, false);
+      return;
+    }
     showToast(`Ocorrência ${occId} atualizada para ${newStatus}.`);
   };
 
@@ -265,18 +440,17 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
     setIsSaving(true);
 
     if (forwardModal.target === "CUSTOMER_SUPPORT") {
-      // Create or update ticket in Customer Support queue
       const ticketId = `TK-OP-${Math.floor(1000 + Math.random() * 9000)}`;
       const newTicket: SupportTicket = {
         id: ticketId,
         customerName: "Cliente (Via Operação)",
-        customerPhone: "923111222",
+        customerPhone: "",
         category: "Atrasos nas entregas",
         subject: `[Encaminhado por Operação] ${forwardModal.type} #${forwardModal.id}`,
         message: forwardModal.reason,
         status: "Encaminhado para operação",
         priority: "Alta",
-        assignedTo: "Teresa Cambinda",
+        assignedTo: store.currentUser?.name || "Apoio ao Cliente",
         orderId: forwardModal.type === "ORDER" ? forwardModal.id : undefined,
         bookingId: forwardModal.type === "BOOKING" ? forwardModal.id : undefined,
         createdAt: new Date().toISOString(),
@@ -284,17 +458,21 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
         forwardTarget: "OPERATIONS",
       };
 
-      await saveAdminStateAsync(
+      const res = await saveAdminStateAsync(
         (st) => ({
           supportTickets: [newTicket, ...st.supportTickets],
         }),
         "FORWARD_OPS_TO_SUPPORT",
         `Caso ${forwardModal.id} encaminhado para Apoio ao Cliente`
       );
+      setIsSaving(false);
+      if (!res.ok) {
+        showToast(res.error || "Falha ao encaminhar caso para Apoio ao Cliente.", false);
+        return;
+      }
       showToast(`Encaminhado para o Apoio ao Cliente (Ticket ${ticketId}).`);
     } else {
-      // Forward to Executive Admin
-      await saveAdminStateAsync(
+      const res = await saveAdminStateAsync(
         (st) => ({
           auditLogs: [
             {
@@ -311,20 +489,33 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
         "FORWARD_OPS_TO_ADMIN",
         `Caso ${forwardModal.id} encaminhado para Administração`
       );
+      setIsSaving(false);
+      if (!res.ok) {
+        showToast(res.error || "Falha ao encaminhar caso para Administração.", false);
+        return;
+      }
       showToast(`Encaminhado para a Direção / Administração Executiva.`);
     }
 
-    setIsSaving(false);
     setForwardModal(null);
   };
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-20">
       {/* Toast Alert */}
-      {toastMsg && (
-        <div className="fixed top-5 right-5 z-50 rounded-2xl bg-slate-900 text-white px-5 py-3 shadow-2xl border border-slate-700 flex items-center gap-3 animate-in fade-in slide-in-from-top-3">
-          <Icon name="CheckCircle2" className="size-5 text-emerald-400" />
-          <span className="text-sm font-bold">{toastMsg}</span>
+      {toastState && (
+        <div
+          className={`fixed top-5 right-5 z-50 rounded-2xl px-5 py-3 shadow-2xl border flex items-center gap-3 animate-in fade-in slide-in-from-top-3 ${
+            toastState.ok
+              ? "bg-slate-900 text-white border-slate-700"
+              : "bg-red-700 text-white border-red-900"
+          }`}
+        >
+          <Icon
+            name={toastState.ok ? "CheckCircle2" : "AlertTriangle"}
+            className={`size-5 ${toastState.ok ? "text-emerald-400" : "text-white"}`}
+          />
+          <span className="text-sm font-bold">{toastState.msg}</span>
         </div>
       )}
 
@@ -739,10 +930,31 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
 
                       <div className="text-[11px] text-muted-foreground">
                         Lojas Fornecedoras: {ord.sellerNames?.join(", ") || "Armazém Central"}
+                        {ord.assignedDriver && (
+                          <span className="ml-2 font-semibold text-primary dark:text-white">
+                            · Estafeta: {ord.assignedDriver}
+                          </span>
+                        )}
                       </div>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedStaff("");
+                          setAssignModal({
+                            targetType: "ORDER",
+                            id: ord.id,
+                            currentAssigned: ord.assignedDriver,
+                          });
+                        }}
+                        className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs font-bold text-primary dark:text-white hover:bg-slate-50"
+                      >
+                        <Icon name="UserCheck" className="size-3.5 inline mr-1" />
+                        {ord.assignedDriver ? "Reatribuir Estafeta" : "Alocar Estafeta"}
+                      </button>
+
                       <select
                         value={ord.orderStatus}
                         onChange={(e) => handleUpdateOrderStatus(ord.id, e.target.value as any)}
@@ -880,7 +1092,7 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
                         value={q.status}
                         onChange={async (e) => {
                           const val = e.target.value as any;
-                          await saveAdminStateAsync(
+                          const res = await saveAdminStateAsync(
                             (st) => ({
                               importQuotes: st.importQuotes.map((item) =>
                                 item.id === q.id ? { ...item, status: val } : item
@@ -889,6 +1101,10 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
                             "UPDATE_IMPORT_STATUS",
                             `Cotação ${q.id} -> ${val}`
                           );
+                          if (!res.ok) {
+                            showToast(res.error || `Falha ao atualizar importação ${q.id}.`, false);
+                            return;
+                          }
                           showToast(`Estado logístico de ${q.id} atualizado para ${val}.`);
                         }}
                         className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 text-xs font-bold text-primary dark:text-white cursor-pointer"
@@ -961,7 +1177,7 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
                           type="button"
                           onClick={async () => {
                             const newBadge = !item.verifiedBadge;
-                            await saveAdminStateAsync(
+                            const res = await saveAdminStateAsync(
                               (st) => ({
                                 intermediaryListings: st.intermediaryListings.map((l) =>
                                   l.id === item.id ? { ...l, verifiedBadge: newBadge } : l
@@ -970,6 +1186,10 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
                               "TOGGLE_INTERMEDIARY_VERIFICATION",
                               `Vistoria ${item.id} -> ${newBadge}`
                             );
+                            if (!res.ok) {
+                              showToast(res.error || `Falha ao atualizar vistoria ${item.id}.`, false);
+                              return;
+                            }
                             showToast(`Vistoria técnica de ${item.id} atualizada.`);
                           }}
                           className={`rounded-lg px-2.5 py-1 text-xs font-bold transition ${
@@ -1229,18 +1449,33 @@ export function OperationsPanel({ initialTab }: { initialTab?: string }) {
                   className={selectCls}
                 >
                   <option value="">Selecione um profissional disponível...</option>
-                  <optgroup label="Equipa Própria Resolve Express">
-                    {store.employees.map((em) => (
-                      <option key={em.id} value={`${em.name} (${em.role})`}>
-                        {em.name} · {em.role}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Parceiros Independentes Credenciados">
-                    <option value="João Baptista (Eletricista Certificado)">João Baptista · Eletricista</option>
-                    <option value="Nelson Paiva (Mecânico Perito)">Nelson Paiva · Peritagem Automóvel</option>
-                    <option value="Manuel Bento (Estafeta Rápido)">Manuel Bento · Estafeta Rápido</option>
-                  </optgroup>
+                  {availableStaffOptions.internal.length > 0 && (
+                    <optgroup label="Equipa Própria Resolve Express">
+                      {availableStaffOptions.internal.map((opt) => (
+                        <option key={opt.key} value={opt.key}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {availableStaffOptions.approvedApps.length > 0 && (
+                    <optgroup label="Parceiros Independentes Credenciados">
+                      {availableStaffOptions.approvedApps.map((opt) => (
+                        <option key={opt.key} value={opt.key}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {availableStaffOptions.approvedPartners.length > 0 && (
+                    <optgroup label="Empresas Parceiras Aprovadas">
+                      {availableStaffOptions.approvedPartners.map((opt) => (
+                        <option key={opt.key} value={opt.key}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
               </Field>
 

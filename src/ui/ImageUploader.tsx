@@ -1,6 +1,12 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Icon } from "./kit";
-import { isSupabaseConfigured, uploadToSupabaseStorage } from "../lib/supabase";
+import { isSupabaseConfigured } from "../lib/supabase";
+import {
+  uploadPlatformAsset,
+  MAX_ASSET_BYTES,
+  type PlatformAsset,
+  type PublicAssetCategory,
+} from "../lib/supabase/storage";
 
 export interface ImageUploaderProps {
   value: string;
@@ -11,11 +17,24 @@ export interface ImageUploaderProps {
   helperText?: string;
   aspectRatio?: "video" | "square" | "wide";
   placeholderText?: string;
+  assetCategory?: PublicAssetCategory;
+  assetTitle?: string;
+  assetDescription?: string;
+  onAssetUploaded?: (asset: PlatformAsset) => void;
 }
+
+const ALLOWED_IMAGE_MIME = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/svg+xml",
+]);
 
 /**
  * ImageUploader component supporting:
- * 1. File upload via input button (with client-side optimization & base64 conversion)
+ * 1. Direct upload to Supabase Storage (`public-assets`) + `platform_assets` registry
  * 2. Web URL input with live preview
  * 3. Smart size adaptation mode toggle (cover vs contain)
  */
@@ -25,27 +44,36 @@ export function ImageUploader({
   fitMode = "cover",
   onFitModeChange,
   label = "Imagem",
-  helperText = "Suporta upload de ficheiro (JPG, PNG, WebP) ou link externo da web.",
+  helperText = "Suporta upload de ficheiro (JPG, PNG, WebP, GIF, SVG até 10 MB) ou link externo da web.",
   aspectRatio = "video",
   placeholderText = "https://images.unsplash.com/...",
+  assetCategory = "general",
+  assetTitle,
+  assetDescription,
+  onAssetUploaded,
 }: ImageUploaderProps) {
   const [tab, setTab] = useState<"file" | "url">(
     value && !value.startsWith("data:") ? "url" : "file"
   );
-  const [urlInput, setUrlInput] = useState(value && !value.startsWith("data:") ? value : "");
+  const [urlInput, setUrlInput] = useState(
+    value && !value.startsWith("data:") ? value : ""
+  );
   const [loading, setLoading] = useState(false);
+  const [uploadStatusMsg, setUploadStatusMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [dimensions, setDimensions] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync external changes
+  const [previewError, setPreviewError] = useState(false);
+
   useEffect(() => {
-    if (value && !value.startsWith("data:")) {
-      setUrlInput(value);
-    }
+    setUrlInput(value && !value.startsWith("data:") && !value.startsWith("blob:") ? value : "");
+    setPreviewError(false);
   }, [value]);
 
-  // Measure image dimensions when value changes
   useEffect(() => {
     if (!value) {
       setDimensions(null);
@@ -55,141 +83,107 @@ export function ImageUploader({
     img.onload = () => {
       setDimensions({ width: img.naturalWidth, height: img.naturalHeight });
     };
+    img.onerror = () => {
+      setDimensions(null);
+    };
     img.src = value;
   }, [value]);
 
-  // Handle local file selection with canvas resizing and server upload
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Reset input value so re-selecting the same file always triggers onChange
+    e.target.value = "";
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      setErrorMsg("Por favor selecione um ficheiro de imagem válido (JPG, PNG, WebP, etc.).");
+    const mime = (file.type || "").toLowerCase();
+    if (!ALLOWED_IMAGE_MIME.has(mime)) {
+      setErrorMsg(
+        "Formato inválido. Envie apenas JPG, PNG, WebP, GIF ou SVG."
+      );
+      setUploadStatusMsg(null);
+      return;
+    }
+
+    if (file.size > MAX_ASSET_BYTES) {
+      setErrorMsg("A imagem excede o limite máximo permitido de 10 MB.");
+      setUploadStatusMsg(null);
+      return;
+    }
+
+    if (!isSupabaseConfigured()) {
+      setErrorMsg(
+        "Supabase não configurado (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY ausentes). O upload cloud requer ligação ao Supabase Storage."
+      );
+      setUploadStatusMsg(null);
       return;
     }
 
     setErrorMsg(null);
+    setUploadStatusMsg(null);
     setLoading(true);
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const rawDataUrl = event.target?.result as string;
-      const img = new Image();
-      img.onload = async () => {
-        // Optimize image size (max 960px) to ensure fast loading and avoid browser storage limits
-        const maxDimension = 960;
-        let targetWidth = img.width;
-        let targetHeight = img.height;
+    try {
+      const uploadRes = await uploadPlatformAsset({
+        file,
+        fileName: file.name,
+        title: assetTitle || file.name.replace(/\.[^.]+$/, ""),
+        description: assetDescription,
+        bucketId: "public-assets",
+        category: assetCategory,
+        visibility: "public",
+      });
 
-        if (targetWidth > maxDimension || targetHeight > maxDimension) {
-          if (targetWidth > targetHeight) {
-            targetHeight = Math.round((targetHeight * maxDimension) / targetWidth);
-            targetWidth = maxDimension;
-          } else {
-            targetWidth = Math.round((targetWidth * maxDimension) / targetHeight);
-            targetHeight = maxDimension;
-          }
-        }
-
-        const canvas = document.createElement("canvas");
-        canvas.width = targetWidth;
-        canvas.height = targetHeight;
-        const ctx = canvas.getContext("2d");
-
-        let optimizedDataUrl = rawDataUrl;
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-          // Export lightweight WebP
-          try {
-            optimizedDataUrl = canvas.toDataURL("image/webp", 0.78);
-          } catch {
-            optimizedDataUrl = canvas.toDataURL("image/jpeg", 0.75);
-          }
-        }
-
-        // 1. Attempt upload to Supabase Storage if configured
-        if (isSupabaseConfigured()) {
-          try {
-            const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-            const storagePath = `uploads/${Date.now()}_${cleanName}`;
-            
-            // Convert canvas or dataUrl to blob
-            const blob = await new Promise<Blob | null>((resolve) => {
-              if (ctx) {
-                canvas.toBlob((b) => resolve(b), "image/webp", 0.85);
-              } else {
-                resolve(file);
-              }
-            });
-
-            if (blob) {
-              const publicUrl = await uploadToSupabaseStorage("public-assets", storagePath, blob);
-              if (publicUrl) {
-                onChange(publicUrl);
-                setDimensions({ width: targetWidth, height: targetHeight });
-                setLoading(false);
-                return;
-              }
-            }
-          } catch (storageErr) {
-            console.warn("Supabase storage upload failed, falling back:", storageErr);
-          }
-        }
-
-        // 2. Attempt server-side upload for lightweight static URL (/uploads/...)
-        try {
-          const res = await fetch("/api/upload-image", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              dataUrl: optimizedDataUrl,
-              filename: file.name,
-            }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data && data.url) {
-              onChange(data.url);
-              setDimensions({ width: targetWidth, height: targetHeight });
-              setLoading(false);
-              return;
-            }
-          }
-        } catch (uploadErr) {
-          console.warn("Could not upload to /api/upload-image, using local optimized image:", uploadErr);
-        }
-
-        // Fallback: use lightweight local optimized WebP
-        onChange(optimizedDataUrl);
-        setDimensions({ width: targetWidth, height: targetHeight });
-        setLoading(false);
-      };
-      img.onerror = () => {
-        setErrorMsg("Erro ao processar imagem.");
-        setLoading(false);
-      };
-      img.src = rawDataUrl;
-    };
-    reader.onerror = () => {
-      setErrorMsg("Erro ao ler ficheiro local.");
+      if (uploadRes.ok && uploadRes.url && uploadRes.asset) {
+        setPreviewError(false);
+        onChange(uploadRes.url);
+        onAssetUploaded?.(uploadRes.asset);
+        setUploadStatusMsg(
+          `Carregado no bucket public-assets e registado em platform_assets (${uploadRes.asset.storage_path})`
+        );
+      } else {
+        // Never overwrite existing value or fall back to Base64 / local disk on failure
+        setErrorMsg(
+          uploadRes.error ||
+            "Não foi possível enviar a imagem para o Supabase Storage."
+        );
+      }
+    } catch (err: any) {
+      setErrorMsg(
+        err?.message || "Erro inesperado ao carregar imagem para o Supabase Storage."
+      );
+    } finally {
       setLoading(false);
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   const handleApplyUrl = () => {
-    if (!urlInput.trim()) {
+    const trimmed = urlInput.trim();
+    if (!trimmed) {
+      setErrorMsg(null);
+      setUploadStatusMsg(null);
       onChange("");
       return;
     }
+    const isSafeUrl =
+      trimmed.startsWith("https://") ||
+      trimmed.startsWith("http://") ||
+      trimmed.startsWith("/");
+    if (!isSafeUrl) {
+      setErrorMsg(
+        "URL inválido. Utilize um endereço https://, http:// ou caminho relativo /."
+      );
+      return;
+    }
     setErrorMsg(null);
-    onChange(urlInput.trim());
+    setUploadStatusMsg(null);
+    onChange(trimmed);
   };
 
   const handleClear = () => {
     onChange("");
     setUrlInput("");
     setErrorMsg(null);
+    setUploadStatusMsg(null);
     setDimensions(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -209,7 +203,9 @@ export function ImageUploader({
         <label className="block text-xs font-bold text-foreground">{label}</label>
         {onFitModeChange && (
           <div className="flex items-center gap-1 bg-mist p-0.5 rounded-lg border border-border text-[11px]">
-            <span className="text-muted-foreground px-1.5 font-medium">Ajuste:</span>
+            <span className="text-muted-foreground px-1.5 font-medium">
+              Ajuste:
+            </span>
             <button
               type="button"
               onClick={() => onFitModeChange("cover")}
@@ -280,7 +276,9 @@ export function ImageUploader({
           />
           <div
             onClick={() => !loading && fileInputRef.current?.click()}
-            className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border/90 bg-mist/30 hover:bg-mist/60 hover:border-action/60 p-4 text-center cursor-pointer transition ${loading ? "opacity-70 pointer-events-none" : ""}`}
+            className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border/90 bg-mist/30 hover:bg-mist/60 hover:border-action/60 p-4 text-center cursor-pointer transition ${
+              loading ? "opacity-70 pointer-events-none" : ""
+            }`}
           >
             <div className="size-10 rounded-full bg-action/10 text-action grid place-items-center">
               {loading ? (
@@ -291,10 +289,14 @@ export function ImageUploader({
             </div>
             <div>
               <p className="text-xs font-bold text-foreground">
-                {loading ? "A processar e otimizar imagem..." : "Clique para selecionar a imagem do seu telemóvel ou computador"}
+                {loading
+                  ? "A enviar para o Supabase Storage..."
+                  : "Clique para selecionar a imagem do seu telemóvel ou computador"}
               </p>
               <p className="text-[11px] text-muted-foreground mt-0.5">
-                {loading ? "Guardando no servidor com resolução adaptada..." : "PNG, JPG, WebP ou SVG (otimização e adaptação automática de tamanho)"}
+                {loading
+                  ? `A guardar em public-assets/${assetCategory}...`
+                  : "PNG, JPG, WebP, GIF ou SVG (máx. 10 MB · sincronização global)"}
               </p>
             </div>
             {!loading && (
@@ -342,9 +344,16 @@ export function ImageUploader({
         </div>
       )}
 
+      {uploadStatusMsg && !errorMsg && (
+        <p className="text-[11px] font-bold text-emerald-700 flex items-center gap-1">
+          <Icon name="CheckCircle2" className="size-3.5 shrink-0" />
+          <span className="truncate">{uploadStatusMsg}</span>
+        </p>
+      )}
+
       {errorMsg && (
         <p className="text-xs font-semibold text-red-600 flex items-center gap-1">
-          <Icon name="AlertCircle" className="size-3.5" /> {errorMsg}
+          <Icon name="AlertCircle" className="size-3.5 shrink-0" /> {errorMsg}
         </p>
       )}
 
@@ -374,25 +383,36 @@ export function ImageUploader({
             </div>
           </div>
 
-          {/* Adaptable Container Preview */}
           <div
             className={`relative w-full ${aspectClass} overflow-hidden rounded-lg border border-border/80 bg-slate-900/5 dark:bg-slate-950/40 flex items-center justify-center`}
           >
-            <img
-              src={value.trim()}
-              alt="Pré-visualização"
-              className={`w-full h-full transition duration-300 ${
-                fitMode === "contain"
-                  ? "object-contain p-1"
-                  : "object-cover object-center"
-              }`}
-            />
+            {previewError ? (
+              <div className="p-4 text-center text-xs text-red-600 space-y-1">
+                <Icon name="AlertTriangle" className="size-5 mx-auto" />
+                <p className="font-semibold">Não foi possível carregar a imagem a partir do URL atual.</p>
+              </div>
+            ) : (
+              <img
+                src={value.trim()}
+                alt="Pré-visualização"
+                onError={() => setPreviewError(true)}
+                onLoad={() => setPreviewError(false)}
+                className={`w-full h-full transition duration-300 ${
+                  fitMode === "contain"
+                    ? "object-contain p-1"
+                    : "object-cover object-center"
+                }`}
+              />
+            )}
             <div className="absolute bottom-1.5 left-1.5 rounded-md bg-black/60 backdrop-blur-xs px-2 py-0.5 text-[10px] font-bold text-white flex items-center gap-1">
               <Icon
                 name={fitMode === "cover" ? "Maximize2" : "Minimize2"}
                 className="size-2.5 text-action"
               />
-              Modo: {fitMode === "cover" ? "Preenchimento total" : "Imagem inteira (sem corte)"}
+              Modo:{" "}
+              {fitMode === "cover"
+                ? "Preenchimento total"
+                : "Imagem inteira (sem corte)"}
             </div>
           </div>
 

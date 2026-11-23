@@ -32,6 +32,7 @@ import {
   About,
   Contacts,
   Legal,
+  PublicDocuments,
   Account,
 } from "./pages/Other";
 import { AuthProvider } from "./lib/AuthContext";
@@ -254,6 +255,10 @@ function AppContent() {
       break;
     case "legal":
       content = <Legal k={parts[1]} />;
+      break;
+    case "documentos":
+    case "docs":
+      content = <PublicDocuments />;
       break;
     case "admin":
       content = (

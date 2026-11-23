@@ -35,6 +35,7 @@ export function PracaAdminSection() {
   const [newCatCommission, setNewCatCommission] = useState(10);
   const [newCatAffCommission, setNewCatAffCommission] = useState(5);
   const [newCatSubcats, setNewCatSubcats] = useState("");
+  const [catSaveError, setCatSaveError] = useState<string | null>(null);
 
   // Commission Settings State
   const [settingsForm, setSettingsForm] = useState({
@@ -85,8 +86,9 @@ export function PracaAdminSection() {
   // Category Actions
   const handleSaveCategory = async (e: React.FormEvent) => {
     e.preventDefault();
+    setCatSaveError(null);
     if (editingCategory) {
-      await saveAdminStateAsync(
+      const res = await saveAdminStateAsync(
         (s) => ({
           pracaCategories: s.pracaCategories.map((c) =>
             c.id === editingCategory.id ? editingCategory : c
@@ -95,6 +97,10 @@ export function PracaAdminSection() {
         "Atualização de Categoria da Praça",
         `Categoria ${editingCategory.name}`
       );
+      if (!res.ok) {
+        setCatSaveError(res.error || "Falha ao gravar alterações da categoria no Supabase. Verifique a ligação/permissões.");
+        return;
+      }
       setEditingCategory(null);
     } else {
       if (!newCatName.trim()) return;
@@ -113,13 +119,17 @@ export function PracaAdminSection() {
           .map((sub) => sub.trim())
           .filter(Boolean),
       };
-      await saveAdminStateAsync(
+      const res = await saveAdminStateAsync(
         (s) => ({
           pracaCategories: [...s.pracaCategories, newCat],
         }),
         "Criação de Categoria da Praça",
         `Nova categoria: ${newCat.name}`
       );
+      if (!res.ok) {
+        setCatSaveError(res.error || "Falha ao criar categoria no Supabase. Verifique a ligação/permissões.");
+        return;
+      }
       setShowAddCategory(false);
       setNewCatName("");
       setNewCatDesc("");
@@ -781,13 +791,23 @@ export function PracaAdminSection() {
                       label="Fotografia de Capa da Categoria"
                       value={newCatImage}
                       onChange={setNewCatImage}
+                      assetCategory="general"
                     />
                   </div>
+
+                  {catSaveError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                      {catSaveError}
+                    </div>
+                  )}
 
                   <div className="flex justify-end gap-2 pt-3 border-t">
                     <button
                       type="button"
-                      onClick={() => setShowAddCategory(false)}
+                      onClick={() => {
+                        setCatSaveError(null);
+                        setShowAddCategory(false);
+                      }}
                       className="rounded-xl border px-4 py-2 text-xs font-bold text-slate-600"
                     >
                       Cancelar
@@ -882,14 +902,26 @@ export function PracaAdminSection() {
                     <ImageUploader
                       label="Fotografia de Capa"
                       value={editingCategory.image}
-                      onChange={(url) => setEditingCategory({ ...editingCategory, image: url })}
+                      onChange={(url) =>
+                        setEditingCategory((prev) => (prev ? { ...prev, image: url } : null))
+                      }
+                      assetCategory="general"
                     />
                   </div>
+
+                  {catSaveError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                      {catSaveError}
+                    </div>
+                  )}
 
                   <div className="flex justify-end gap-2 pt-3 border-t">
                     <button
                       type="button"
-                      onClick={() => setEditingCategory(null)}
+                      onClick={() => {
+                        setCatSaveError(null);
+                        setEditingCategory(null);
+                      }}
                       className="rounded-xl border px-4 py-2 text-xs font-bold text-slate-600"
                     >
                       Cancelar

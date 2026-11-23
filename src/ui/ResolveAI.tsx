@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Icon, go } from "./kit";
 import { useStore, waLink } from "../lib/store";
-import { allServices, CATEGORIES } from "../lib/data";
+import { getAuthAccessToken } from "../lib/supabase";
 
 interface ChatMessage {
   id: string;
@@ -56,9 +56,13 @@ export function ResolveAI({
 
     // Try server-side Gemini API route first
     try {
+      const token = await getAuthAccessToken();
       const res = await fetch("/api/ai/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           prompt: textToSend,
           context: {

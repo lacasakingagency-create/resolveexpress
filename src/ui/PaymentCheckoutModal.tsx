@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { Icon, Btn, Field, inputCls } from "./kit";
-import { useStore, kz, formatCurrency } from "../lib/store";
-import { PAYMENTS, ANGOLA_BANKS, type PaymentMethodDef, type AngolaBank } from "../lib/data";
+import { useStore, kz } from "../lib/store";
+import { PAYMENTS, ANGOLA_BANKS, type AngolaBank } from "../lib/data";
+import {
+  isSupabaseConfigured,
+  uploadPaymentProofToStorage,
+  executeWalletMovementStrict,
+} from "../lib/supabase";
 
 export interface PaymentCheckoutModalProps {
   open: boolean;
@@ -19,7 +24,7 @@ export interface PaymentCheckoutModalProps {
     reference?: string;
     proofOfPayment?: string;
     paymentDetails: Record<string, any>;
-  }) => void;
+  }) => void | Promise<void | boolean>;
 }
 
 export function PaymentCheckoutModal({
@@ -52,7 +57,8 @@ export function PaymentCheckoutModal({
   // Transferência Bancária State
   const [selectedBankId, setSelectedBankId] = useState<string>("bai");
   const [ibanCopied, setIbanCopied] = useState(false);
-  const [proofFile, setProofFile] = useState<string | null>(null);
+  const [proofFileObj, setProofFileObj] = useState<File | null>(null);
+  const [proofFileName, setProofFileName] = useState<string | null>(null);
   const [proofRefNumber, setProofRefNumber] = useState("");
   const [proofNote, setProofNote] = useState("");
   const [transferSubmitted, setTransferSubmitted] = useState(false);
@@ -62,14 +68,17 @@ export function PaymentCheckoutModal({
   const [needsChange, setNeedsChange] = useState(false);
   const [changeForAmount, setChangeForAmount] = useState<number>(Math.ceil(totalAOA / 5000) * 5000);
 
+  // Error & Async submission state
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
   // Carteira Digital State
-  const walletBalance = store.clientWallet?.balanceAOA ?? 75000;
+  const walletBalance = store.clientWallet?.balanceAOA ?? 0;
   const hasEnoughWalletBalance = walletBalance >= totalAOA;
 
   // Generate Reference on mount/open
   useEffect(() => {
     if (open) {
-      // Deterministic 9-digit Multicaixa reference based on itemId or random
       const randNum = Math.floor(100000000 + Math.random() * 900000000);
       const formatted = `${String(randNum).slice(0, 3)} ${String(randNum).slice(3, 6)} ${String(randNum).slice(6, 9)}`;
       setMulticaixaRef(formatted);
@@ -78,6 +87,12 @@ export function PaymentCheckoutModal({
       setMcxTimer(300);
       setRefPaid(false);
       setTransferSubmitted(false);
+      setProofFileObj(null);
+      setProofFileName(null);
+      setProofRefNumber("");
+      setProofNote("");
+      setIsSubmitting(false);
+      setErrorMsg(null);
     }
   }, [open, itemId]);
 
@@ -113,92 +128,173 @@ export function PaymentCheckoutModal({
     }
   };
 
-  // 1. Multicaixa Express Execution
+  const finalizePaymentSubmission = async (payload: {
+    method: string;
+    status: string;
+    reference?: string;
+    proofOfPayment?: string;
+    paymentDetails: Record<string, any>;
+  }): Promise<boolean> => {
+    try {
+      const result = await onPaymentSuccess(payload);
+      if (result === false) {
+        return false;
+      }
+      onClose();
+      return true;
+    } catch (err: any) {
+      setErrorMsg(err?.message || "Falha ao registar pagamento. Tente novamente.");
+      return false;
+    }
+  };
+
+  // 1. Multicaixa Express Execution (No simulated instant approval)
   const handleStartMcxPayment = () => {
+    setErrorMsg(null);
     if (!mcxPhone || mcxPhone.replace(/\D/g, "").length < 9) {
-      alert("Por favor introduza um número de telemóvel angolano válido associado ao MCX Express.");
+      setErrorMsg("Introduza um número de telemóvel angolano válido associado ao MCX Express.");
       return;
     }
+    setMcxTimer(300);
     setMcxStep("waiting");
   };
 
-  const handleConfirmMcxSuccess = () => {
+  const handleConfirmMcxSuccess = async () => {
+    setErrorMsg(null);
+    if (mcxTimer === 0) {
+      setErrorMsg("A sessão Multicaixa Express expirou após 5 minutos. Por favor inicie um novo pedido.");
+      return;
+    }
+    setIsSubmitting(true);
     setMcxStep("success");
-    setTimeout(() => {
-      onPaymentSuccess({
-        method: "Multicaixa Express",
-        status: "Pago",
+    const ok = await finalizePaymentSubmission({
+      method: "Multicaixa Express",
+      status: "Aguardando confirmação EMIS",
+      reference: mcxTransactionId,
+      paymentDetails: {
+        method: "mcx",
+        phone: mcxPhone,
+        entity: "99245",
         reference: mcxTransactionId,
-        paymentDetails: {
-          method: "mcx",
-          phone: mcxPhone,
-          entity: "99245",
-          reference: mcxTransactionId,
-          emisAuthCode: `EMIS-${Math.floor(100000 + Math.random() * 900000)}`,
-          paidAt: new Date().toISOString(),
-          amountAOA: totalAOA,
-        },
-      });
-      onClose();
-    }, 1200);
+        requestedAt: new Date().toISOString(),
+        amountAOA: totalAOA,
+        awaitWebhookConfirmation: true,
+      },
+    });
+    if (!ok) {
+      setMcxStep("waiting");
+    }
+    setIsSubmitting(false);
   };
 
-  // 2. Referência Multicaixa Execution
-  const handleConfirmRefPayment = () => {
+  // 2. Referência Multicaixa Execution (Remains pending until bank/webhook reconciliation)
+  const handleConfirmRefPayment = async () => {
+    setErrorMsg(null);
+    setIsSubmitting(true);
     setRefPaid(true);
-    setTimeout(() => {
-      onPaymentSuccess({
-        method: "Referência Multicaixa",
-        status: "Pago",
+    const ok = await finalizePaymentSubmission({
+      method: "Referência Multicaixa",
+      status: "Aguardando pagamento por referência",
+      reference: multicaixaRef,
+      paymentDetails: {
+        method: "ref",
+        entity: refEntity,
         reference: multicaixaRef,
-        paymentDetails: {
-          method: "ref",
-          entity: refEntity,
-          reference: multicaixaRef,
-          paidAt: new Date().toISOString(),
-          amountAOA: totalAOA,
-        },
-      });
-      onClose();
-    }, 1000);
+        generatedAt: new Date().toISOString(),
+        amountAOA: totalAOA,
+        awaitBankConfirmation: true,
+      },
+    });
+    if (!ok) {
+      setRefPaid(false);
+    }
+    setIsSubmitting(false);
   };
 
   // 3. Transferência Bancária Execution
-  const handleUploadSimulatedProof = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSelectProofFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setErrorMsg(null);
     const file = e.target.files?.[0];
-    if (file) {
-      const fakeUrl = URL.createObjectURL(file);
-      setProofFile(fakeUrl);
+    if (!file) {
+      setProofFileObj(null);
+      setProofFileName(null);
+      return;
     }
+    const allowed = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
+    if (!allowed.has(file.type)) {
+      setErrorMsg("Formato inválido. Envie apenas imagem (JPG, PNG, WebP) ou documento PDF.");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setErrorMsg("O comprovativo excede o tamanho máximo permitido de 10 MB.");
+      e.target.value = "";
+      return;
+    }
+    setProofFileObj(file);
+    setProofFileName(file.name);
   };
 
-  const handleConfirmTransfer = () => {
+  const handleConfirmTransfer = async () => {
+    setErrorMsg(null);
+    if (!proofFileObj && proofRefNumber.trim().length < 4) {
+      setErrorMsg("Anexe o ficheiro do comprovativo (JPG, PNG, WebP ou PDF) ou informe o número válido da operação bancária.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    let uploadedProofUrl: string | undefined;
+
+    if (proofFileObj) {
+      if (isSupabaseConfigured()) {
+        const uploadRes = await uploadPaymentProofToStorage(
+          proofFileObj,
+          store.currentUser?.id || "anon",
+          itemId
+        );
+        if (!uploadRes.ok) {
+          setErrorMsg(uploadRes.error || "Não foi possível carregar o comprovativo no armazenamento seguro.");
+          setIsSubmitting(false);
+          return;
+        }
+        uploadedProofUrl = uploadRes.path || uploadRes.url;
+      } else {
+        uploadedProofUrl = `local-proof:${proofFileObj.name}`;
+      }
+    }
+
     setTransferSubmitted(true);
-    setTimeout(() => {
-      onPaymentSuccess({
-        method: "Transferência Bancária",
-        status: "Comprovativo enviado",
-        reference: proofRefNumber || `TRF-${Math.floor(100000 + Math.random() * 900000)}`,
-        proofOfPayment: proofFile || "comprovativo_anexado.pdf",
-        paymentDetails: {
-          method: "transfer",
-          bank: currentBank.name,
-          iban: currentBank.iban,
-          proofRef: proofRefNumber,
-          proofNote,
-          proofFile: proofFile || "comprovativo_anexado.pdf",
-          submittedAt: new Date().toISOString(),
-          amountAOA: totalAOA,
-        },
-      });
-      onClose();
-    }, 1200);
+    const finalRef = proofRefNumber.trim() || `TRF-${Date.now().toString().slice(-6)}`;
+    const ok = await finalizePaymentSubmission({
+      method: "Transferência Bancária",
+      status: "Comprovativo enviado",
+      reference: finalRef,
+      proofOfPayment: uploadedProofUrl,
+      paymentDetails: {
+        method: "transfer",
+        bank: currentBank.name,
+        iban: currentBank.iban,
+        proofRef: finalRef,
+        proofNote,
+        proofFileName: proofFileName || undefined,
+        proofStoragePath: uploadedProofUrl || undefined,
+        submittedAt: new Date().toISOString(),
+        amountAOA: totalAOA,
+        requiresAccountingReview: true,
+      },
+    });
+    if (!ok) {
+      setTransferSubmitted(false);
+    }
+    setIsSubmitting(false);
   };
 
   // 4. Pagamento na Entrega Execution
-  const handleConfirmDeliveryPayment = () => {
+  const handleConfirmDeliveryPayment = async () => {
+    setErrorMsg(null);
+    setIsSubmitting(true);
     const changeToReturn = needsChange && changeForAmount > totalAOA ? changeForAmount - totalAOA : 0;
-    onPaymentSuccess({
+    await finalizePaymentSubmission({
       method: deliveryPayType === "tpa" ? "TPA na Entrega" : "Dinheiro na Entrega",
       status: "A pagar na entrega",
       paymentDetails: {
@@ -210,45 +306,112 @@ export function PaymentCheckoutModal({
         amountAOA: totalAOA,
       },
     });
-    onClose();
+    setIsSubmitting(false);
   };
 
   // 5. Carteira Digital Execution
-  const handleConfirmWalletPayment = () => {
-    if (!hasEnoughWalletBalance) return;
+  const handleConfirmWalletPayment = async () => {
+    setErrorMsg(null);
+    if (!hasEnoughWalletBalance) {
+      setErrorMsg("Saldo insuficiente na carteira.");
+      return;
+    }
+    if (totalAOA <= 0) {
+      setErrorMsg("Montante inválido para pagamento.");
+      return;
+    }
 
-    // Deduct from client wallet
-    setStore((st) => {
-      const current = st.clientWallet?.balanceAOA ?? 75000;
-      const newBal = current - totalAOA;
-      const historyEntry = {
-        id: `CW-${Date.now().toString().slice(-4)}`,
-        date: new Date().toISOString().slice(0, 16).replace("T", " "),
+    const txRef = `WAL-${itemType.toUpperCase()}-${itemId}`;
+    setIsSubmitting(true);
+
+    if (isSupabaseConfigured()) {
+      if (!store.currentUser?.id) {
+        setErrorMsg("Inicie sessão com uma conta autenticada para utilizar a Carteira Resolve Express.");
+        setIsSubmitting(false);
+        return;
+      }
+
+      const rpcRes = await executeWalletMovementStrict({
+        userId: store.currentUser.id,
+        type: "debit",
         amountAOA: totalAOA,
-        type: "debit" as const,
         description: `Pagamento de ${itemType === "order" ? "Encomenda" : "Serviço"} ${itemId}`,
-      };
-      return {
-        clientWallet: {
-          balanceAOA: newBal,
-          history: [historyEntry, ...(st.clientWallet?.history || [])],
-        },
-      };
-    });
+        reference: txRef,
+      });
 
-    onPaymentSuccess({
+      if (!rpcRes.ok) {
+        setErrorMsg(
+          rpcRes.error ||
+            "Não foi possível debitar a carteira no servidor (requer RPC autorizada para cliente)."
+        );
+        setIsSubmitting(false);
+        return;
+      }
+
+      const updatedBalance = rpcRes.balanceAOA ?? Math.max(0, walletBalance - totalAOA);
+      setStore((st) => ({
+        clientWallet: {
+          balanceAOA: updatedBalance,
+          history: [
+            {
+              id: txRef,
+              date: new Date().toISOString().slice(0, 16).replace("T", " "),
+              amountAOA: totalAOA,
+              type: "debit" as const,
+              description: `Pagamento de ${itemType === "order" ? "Encomenda" : "Serviço"} ${itemId}`,
+            },
+            ...(st.clientWallet?.history || []),
+          ],
+        },
+      }));
+
+      await finalizePaymentSubmission({
+        method: "Carteira Resolve Express",
+        status: "Pago",
+        reference: txRef,
+        paymentDetails: {
+          method: "wallet",
+          paidFromWallet: true,
+          remainingWalletBalance: updatedBalance,
+          paidAt: new Date().toISOString(),
+          amountAOA: totalAOA,
+        },
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
+    // Local preview mode when Supabase is not configured
+    const newBal = Math.max(0, walletBalance - totalAOA);
+    setStore((st) => ({
+      clientWallet: {
+        balanceAOA: newBal,
+        history: [
+          {
+            id: txRef,
+            date: new Date().toISOString().slice(0, 16).replace("T", " "),
+            amountAOA: totalAOA,
+            type: "debit" as const,
+            description: `Pagamento de ${itemType === "order" ? "Encomenda" : "Serviço"} ${itemId}`,
+          },
+          ...(st.clientWallet?.history || []),
+        ],
+      },
+    }));
+
+    await finalizePaymentSubmission({
       method: "Carteira Resolve Express",
       status: "Pago",
-      reference: `WAL-${Date.now().toString().slice(-6)}`,
+      reference: txRef,
       paymentDetails: {
         method: "wallet",
         paidFromWallet: true,
-        remainingWalletBalance: walletBalance - totalAOA,
+        remainingWalletBalance: newBal,
         paidAt: new Date().toISOString(),
         amountAOA: totalAOA,
       },
     });
-    onClose();
+    setIsSubmitting(false);
   };
 
   return (
@@ -309,6 +472,13 @@ export function PaymentCheckoutModal({
           </div>
         </div>
 
+        {errorMsg && (
+          <div className="mb-4 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs font-semibold text-destructive flex items-start gap-2">
+            <Icon name="AlertTriangle" className="size-4 shrink-0 mt-0.5" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
         {/* Payment Methods Tabs */}
         <div className="space-y-3">
           <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
@@ -321,7 +491,10 @@ export function PaymentCheckoutModal({
                 <button
                   key={p.id}
                   type="button"
-                  onClick={() => setSelectedMethod(p.id)}
+                  onClick={() => {
+                    setErrorMsg(null);
+                    setSelectedMethod(p.id);
+                  }}
                   className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition cursor-pointer relative ${
                     isSelected
                       ? "border-action bg-action/10 text-primary shadow-xs ring-2 ring-action/20"
@@ -448,13 +621,18 @@ export function PaymentCheckoutModal({
                 <div className="flex flex-col sm:flex-row gap-2 justify-center pt-2">
                   <Btn
                     kind="action"
+                    disabled={isSubmitting || mcxTimer === 0}
                     className="min-h-11 px-6 text-xs shadow-md"
                     onClick={handleConfirmMcxSuccess}
                   >
-                    <Icon name="Check" className="size-4" /> Já Confirmei no Telemóvel / Simular Aprovação
+                    <Icon name="Clock" className="size-4" />{" "}
+                    {isSubmitting
+                      ? "A registar pedido..."
+                      : "Submeter Pedido MCX (Aguardando Confirmação EMIS)"}
                   </Btn>
                   <Btn
                     kind="ghost"
+                    disabled={isSubmitting}
                     className="min-h-11 px-4 text-xs"
                     onClick={() => setMcxStep("input")}
                   >
@@ -466,14 +644,14 @@ export function PaymentCheckoutModal({
 
             {mcxStep === "success" && (
               <div className="py-6 text-center space-y-2">
-                <div className="mx-auto grid size-14 place-items-center rounded-full bg-ok text-white animate-scale-up">
-                  <Icon name="Check" className="size-8" />
+                <div className="mx-auto grid size-14 place-items-center rounded-full bg-warn text-white">
+                  <Icon name="Clock" className="size-8" />
                 </div>
-                <h4 className="font-display text-lg font-black text-ok">
-                  Pagamento Multicaixa Express Aprovado!
+                <h4 className="font-display text-lg font-black text-primary">
+                  Pedido MCX Registado (Aguardando Confirmação EMIS)
                 </h4>
                 <p className="text-xs text-muted-foreground">
-                  A EMIS confirmou a liquidação de {kz(totalAOA)}. O seu pedido foi validado automaticamente.
+                  O pedido de {kz(totalAOA)} ficou registado como pendente até validação bancária / EMIS.
                 </p>
               </div>
             )}
@@ -584,10 +762,16 @@ export function PaymentCheckoutModal({
             <div className="pt-2 flex justify-end gap-3">
               <Btn
                 kind="action"
+                disabled={isSubmitting}
                 className="w-full sm:w-auto min-h-11 px-6 text-xs shadow-md"
                 onClick={handleConfirmRefPayment}
               >
-                <Icon name="Check" className="size-4" /> {refPaid ? "Confirmado!" : "Já Realizei o Pagamento / Confirmar"}
+                <Icon name="FileText" className="size-4" />{" "}
+                {isSubmitting
+                  ? "A registar referência..."
+                  : refPaid
+                  ? "Referência Registada (Pendente)"
+                  : "Registar Referência e Concluir Pedido"}
               </Btn>
             </div>
           </div>
@@ -677,23 +861,23 @@ export function PaymentCheckoutModal({
 
             {/* Proof Upload & Details */}
             <div className="space-y-3 pt-2">
-              <Field label="Anexar Comprovativo de Transferência (Foto ou PDF)">
+              <Field label="Anexar Comprovativo de Transferência (Foto JPG/PNG/WebP ou PDF, máx. 10MB)">
                 <div className="flex items-center gap-3">
                   <input
                     type="file"
-                    accept="image/*,.pdf"
-                    onChange={handleUploadSimulatedProof}
+                    accept="image/jpeg,image/png,image/webp,.pdf"
+                    onChange={handleSelectProofFile}
                     className={inputCls + " file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-bold file:bg-primary file:text-white hover:file:bg-action"}
                   />
                 </div>
-                {proofFile && (
+                {proofFileName && (
                   <div className="mt-2 flex items-center gap-2 rounded bg-ok/10 text-ok p-2 text-xs font-bold">
-                    <Icon name="CheckCircle2" className="size-4" /> Comprovativo carregado com sucesso!
+                    <Icon name="CheckCircle2" className="size-4" /> Ficheiro selecionado: {proofFileName}
                   </div>
                 )}
               </Field>
 
-              <Field label="Nº de Operação Bancária / Talão (Opcional)">
+              <Field label="Nº de Operação Bancária / Talão (Obrigatório se não anexar ficheiro)">
                 <input
                   type="text"
                   value={proofRefNumber}
@@ -715,10 +899,14 @@ export function PaymentCheckoutModal({
 
               <Btn
                 kind="action"
+                disabled={isSubmitting || transferSubmitted}
                 className="w-full min-h-12 text-sm shadow-md mt-2"
                 onClick={handleConfirmTransfer}
               >
-                <Icon name="UploadCloud" className="size-4" /> Submeter Comprovativo e Concluir Pedido
+                <Icon name="UploadCloud" className="size-4" />{" "}
+                {isSubmitting
+                  ? "A enviar comprovativo..."
+                  : "Submeter Comprovativo e Concluir Pedido"}
               </Btn>
             </div>
           </div>
@@ -837,10 +1025,12 @@ export function PaymentCheckoutModal({
 
             <Btn
               kind="action"
+              disabled={isSubmitting}
               className="w-full min-h-12 text-sm shadow-md mt-2"
               onClick={handleConfirmDeliveryPayment}
             >
-              <Icon name="Check" className="size-4" /> Confirmar Pagamento na Entrega
+              <Icon name="Check" className="size-4" />{" "}
+              {isSubmitting ? "A registar..." : "Confirmar Pagamento na Entrega"}
             </Btn>
           </div>
         )}
@@ -859,7 +1049,7 @@ export function PaymentCheckoutModal({
                   Carteira Digital Resolve Express
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Debite instantaneamente do saldo pré-pago da sua conta na plataforma.
+                  Debite do saldo pré-pago da sua conta na plataforma.
                 </p>
               </div>
             </div>
@@ -889,10 +1079,12 @@ export function PaymentCheckoutModal({
             {hasEnoughWalletBalance ? (
               <Btn
                 kind="action"
+                disabled={isSubmitting}
                 className="w-full min-h-12 text-sm shadow-md"
                 onClick={handleConfirmWalletPayment}
               >
-                <Icon name="CheckCircle2" className="size-4" /> Pagar Agora com Saldo da Carteira
+                <Icon name="CheckCircle2" className="size-4" />{" "}
+                {isSubmitting ? "A debitar carteira..." : "Pagar Agora com Saldo da Carteira"}
               </Btn>
             ) : (
               <div className="space-y-3">
