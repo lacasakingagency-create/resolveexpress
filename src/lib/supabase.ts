@@ -2,34 +2,193 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import type { Product, Service } from "./data";
 import type { BookingRecord, ProductOrderRecord } from "./store";
 
-// VITE client environment variables (static import.meta.env access so Vite inlines in production)
-const supabaseUrl: string =
+// VITE client environment variables (static import.meta.env access so Vite inlines identically in dev and prod)
+const RAW_ENV_SUPABASE_URL: string =
   (typeof import.meta !== "undefined" && import.meta.env
     ? import.meta.env.VITE_SUPABASE_URL
     : "") || "";
-const supabaseAnonKey: string =
+const RAW_ENV_SUPABASE_ANON_KEY: string =
   (typeof import.meta !== "undefined" && import.meta.env
     ? import.meta.env.VITE_SUPABASE_ANON_KEY
     : "") || "";
 
+export interface SupabaseUrlValidationResult {
+  valid: boolean;
+  present: boolean;
+  normalizedUrl: string;
+  error: string | null;
+}
+
+export interface SupabaseConfigDiagnostics {
+  configured: boolean;
+  urlPresent: boolean;
+  anonKeyPresent: boolean;
+  resolvedUrl: string;
+  urlValid: boolean;
+  error: string | null;
+}
+
+function stripOuterQuotes(raw: string): string {
+  const trimmed = raw.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
 /**
- * Checks if Supabase credentials have been configured in .env or Vercel/build environment.
+ * Validates that VITE_SUPABASE_URL is exclusively the base Supabase project URL:
+ * e.g. https://PROJECT_REF.supabase.co
+ * Rejects spaces, control chars, query/hash fragments, and paths like /auth/v1, /rest/v1, /storage/v1.
+ */
+export function validateAndNormalizeSupabaseUrl(rawUrl: string): SupabaseUrlValidationResult {
+  const raw = typeof rawUrl === "string" ? rawUrl : "";
+  const cleaned = stripOuterQuotes(raw);
+  if (!cleaned) {
+    return {
+      valid: false,
+      present: false,
+      normalizedUrl: "",
+      error: "VITE_SUPABASE_URL está ausente.",
+    };
+  }
+
+  if (/\s/.test(cleaned) || /[\u0000-\u001F\u007F]/.test(cleaned)) {
+    return {
+      valid: false,
+      present: true,
+      normalizedUrl: "",
+      error: "VITE_SUPABASE_URL contém espaços ou caracteres inválidos.",
+    };
+  }
+
+  if (
+    cleaned.includes("your-project") ||
+    cleaned.includes("placeholder-project")
+  ) {
+    return {
+      valid: false,
+      present: false,
+      normalizedUrl: "",
+      error: "VITE_SUPABASE_URL contém um valor placeholder.",
+    };
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(cleaned);
+  } catch {
+    return {
+      valid: false,
+      present: true,
+      normalizedUrl: "",
+      error: "VITE_SUPABASE_URL não é uma URL válida. Formato esperado: https://PROJECT_REF.supabase.co",
+    };
+  }
+
+  const isLocalHost =
+    parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+  if (parsed.protocol !== "https:" && !(isLocalHost && parsed.protocol === "http:")) {
+    return {
+      valid: false,
+      present: true,
+      normalizedUrl: "",
+      error: "VITE_SUPABASE_URL deve usar HTTPS (ex.: https://PROJECT_REF.supabase.co).",
+    };
+  }
+
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    return {
+      valid: false,
+      present: true,
+      normalizedUrl: "",
+      error: "VITE_SUPABASE_URL deve conter apenas a URL base sem credenciais, query string ou fragmento.",
+    };
+  }
+
+  const normalizedPath = parsed.pathname.replace(/\/+$/, "");
+  if (normalizedPath !== "") {
+    return {
+      valid: false,
+      present: true,
+      normalizedUrl: "",
+      error: `VITE_SUPABASE_URL contém caminho indevido ('${parsed.pathname}'). Deve ser apenas a URL base (ex.: ${parsed.origin}).`,
+    };
+  }
+
+  return {
+    valid: true,
+    present: true,
+    normalizedUrl: parsed.origin,
+    error: null,
+  };
+}
+
+function normalizeAnonKey(rawKey: string): {
+  valid: boolean;
+  present: boolean;
+  cleanedKey: string;
+  error: string | null;
+} {
+  const cleaned = stripOuterQuotes(typeof rawKey === "string" ? rawKey : "");
+  if (!cleaned) {
+    return { valid: false, present: false, cleanedKey: "", error: "VITE_SUPABASE_ANON_KEY está ausente." };
+  }
+  if (/\s/.test(cleaned)) {
+    return { valid: false, present: true, cleanedKey: "", error: "VITE_SUPABASE_ANON_KEY contém espaços ou quebras de linha inválidas." };
+  }
+  if (cleaned.includes("your-anon-key") || cleaned.includes("placeholder")) {
+    return { valid: false, present: false, cleanedKey: "", error: "VITE_SUPABASE_ANON_KEY contém um valor placeholder." };
+  }
+  return { valid: true, present: true, cleanedKey: cleaned, error: null };
+}
+
+const urlValidation = validateAndNormalizeSupabaseUrl(RAW_ENV_SUPABASE_URL);
+const keyValidation = normalizeAnonKey(RAW_ENV_SUPABASE_ANON_KEY);
+
+const supabaseUrl: string = urlValidation.valid ? urlValidation.normalizedUrl : "";
+const supabaseAnonKey: string = keyValidation.valid ? keyValidation.cleanedKey : "";
+
+/**
+ * Returns non-secret configuration diagnostics for Supabase client initialization.
+ * Never exposes keys or tokens.
+ */
+export function getSupabaseConfigDiagnostics(): SupabaseConfigDiagnostics {
+  const configured = Boolean(urlValidation.valid && keyValidation.valid);
+  const error = !configured
+    ? urlValidation.error || keyValidation.error || "Supabase não está configurado."
+    : null;
+  return {
+    configured,
+    urlPresent: urlValidation.present,
+    anonKeyPresent: keyValidation.present,
+    resolvedUrl: supabaseUrl,
+    urlValid: urlValidation.valid,
+    error,
+  };
+}
+
+/**
+ * Returns the exact base URL used by the browser Supabase client (or "" if not validly configured).
+ */
+export function getSupabaseClientUrl(): string {
+  return supabaseUrl;
+}
+
+/**
+ * Checks if Supabase credentials have been configured validly in .env or Vercel/build environment.
  */
 export function isSupabaseConfigured(): boolean {
-  return Boolean(
-    supabaseUrl &&
-      supabaseAnonKey &&
-      supabaseUrl.startsWith("http") &&
-      !supabaseUrl.includes("your-project") &&
-      !supabaseUrl.includes("placeholder-project") &&
-      !supabaseAnonKey.includes("your-anon-key") &&
-      !supabaseAnonKey.includes("placeholder")
-  );
+  return Boolean(urlValidation.valid && keyValidation.valid);
 }
 
 /**
  * Official Supabase Client
- * Initialized with anon key for browser-safe operations with Row-Level-Security (RLS).
+ * Initialized strictly with base project URL (https://PROJECT_REF.supabase.co) and anon key
+ * for browser-safe operations with Row-Level-Security (RLS).
  */
 export const supabase: SupabaseClient = createClient(
   supabaseUrl || "https://placeholder-project.supabase.co",
@@ -599,11 +758,15 @@ export function mapUserRoleToDbRole(role: import("./store").UserRole): string {
  * Real Supabase sign in with password
  */
 export async function signInWithSupabase(email: string, pass: string) {
-  if (!isSupabaseConfigured()) {
-    return { data: null, error: new Error("Supabase não está configurado.") };
+  const diag = getSupabaseConfigDiagnostics();
+  if (!diag.configured) {
+    return {
+      data: null,
+      error: new Error(diag.error || "Supabase não está configurado."),
+    };
   }
   return await supabase.auth.signInWithPassword({
-    email,
+    email: email.trim(),
     password: pass,
   });
 }
@@ -621,11 +784,15 @@ export async function signUpWithSupabase(params: {
   municipio?: string;
   bairro?: string;
 }) {
-  if (!isSupabaseConfigured()) {
-    return { data: null, error: new Error("Supabase não está configurado.") };
+  const diag = getSupabaseConfigDiagnostics();
+  if (!diag.configured) {
+    return {
+      data: null,
+      error: new Error(diag.error || "Supabase não está configurado."),
+    };
   }
   return await supabase.auth.signUp({
-    email: params.email,
+    email: params.email.trim(),
     password: params.pass,
     options: {
       data: {

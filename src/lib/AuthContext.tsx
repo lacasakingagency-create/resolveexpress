@@ -3,12 +3,13 @@ import type { Session, User } from "@supabase/supabase-js";
 import {
   supabase,
   isSupabaseConfigured,
+  getSupabaseConfigDiagnostics,
+  type SupabaseConfigDiagnostics,
   signInWithSupabase,
   signUpWithSupabase,
   signOutSupabase,
   getSupabaseProfile,
   mapDbRoleToUserRole,
-  mapUserRoleToDbRole,
 } from "./supabase";
 import { useStore, type UserAccount, type UserRole } from "./store";
 import {
@@ -22,7 +23,16 @@ interface AuthContextType {
   profile: UserAccount | null;
   loading: boolean;
   isConfigured: boolean;
-  signIn: (email: string, pass: string) => Promise<{ error: Error | null; user?: any; profile?: UserAccount | null }>;
+  configDiagnostics: SupabaseConfigDiagnostics;
+  signIn: (
+    email: string,
+    pass: string
+  ) => Promise<{
+    error: Error | null;
+    user?: User | null;
+    session?: Session | null;
+    profile?: UserAccount | null;
+  }>;
   signUp: (params: {
     email: string;
     pass: string;
@@ -148,15 +158,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = async (email: string, pass: string) => {
     setLoading(true);
-    const { data, error } = await signInWithSupabase(email, pass);
-    let profile: UserAccount | null = null;
-    if (!error && data?.user) {
-      setUser(data.user);
-      setSession(data.session);
-      profile = await syncProfile(data.user);
+    try {
+      const { data, error } = await signInWithSupabase(email, pass);
+      let profile: UserAccount | null = null;
+      if (!error && data?.user) {
+        setUser(data.user);
+        setSession(data.session ?? null);
+        profile = await syncProfile(data.user);
+        refreshPlatformAssetsSnapshot();
+        refreshPlatformSettingsSnapshot();
+      }
+      return {
+        error,
+        user: data?.user ?? null,
+        session: data?.session ?? null,
+        profile,
+      };
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-    return { error, user: data?.user, profile };
   };
 
   const signUp = async (params: {
@@ -171,35 +191,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     address?: string;
   }) => {
     setLoading(true);
-    // Security: Public self-registration is strictly 'cliente'. Administrative roles require database elevation.
-    const dbRole = "cliente";
-    const { data, error } = await signUpWithSupabase({
-      email: params.email,
-      pass: params.pass,
-      fullName: params.fullName,
-      phone: params.phone,
-      role: dbRole,
-      province: params.province,
-      municipio: params.municipio,
-      bairro: params.bairro,
-    });
+    try {
+      // Security: Public self-registration is strictly 'cliente'. Administrative roles require database elevation.
+      const dbRole = "cliente";
+      const { data, error } = await signUpWithSupabase({
+        email: params.email,
+        pass: params.pass,
+        fullName: params.fullName,
+        phone: params.phone,
+        role: dbRole,
+        province: params.province,
+        municipio: params.municipio,
+        bairro: params.bairro,
+      });
 
-    if (!error && data?.user) {
-      setUser(data.user);
-      setSession(data.session);
-      await syncProfile(data.user);
+      if (!error && data?.user) {
+        setUser(data.user);
+        setSession(data.session ?? null);
+        await syncProfile(data.user);
+      }
+      return { error, user: data?.user };
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-    return { error, user: data?.user };
   };
 
   const signOut = async () => {
     setLoading(true);
-    await signOutSupabase();
-    setSession(null);
-    setUser(null);
-    setStore(() => ({ currentUser: null }));
-    setLoading(false);
+    try {
+      await signOutSupabase();
+      setSession(null);
+      setUser(null);
+      setStore(() => ({ currentUser: null }));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const refreshProfile = async () => {
@@ -213,13 +239,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return allowedRoles.includes(store.currentUser.role);
   };
 
+  const configDiagnostics = getSupabaseConfigDiagnostics();
+
   const value = useMemo(
     () => ({
       session,
       user,
       profile: store.currentUser,
       loading,
-      isConfigured: isSupabaseConfigured(),
+      isConfigured: configDiagnostics.configured,
+      configDiagnostics,
       signIn,
       signUp,
       signOut,

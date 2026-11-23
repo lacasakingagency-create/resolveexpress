@@ -20,11 +20,49 @@ export function Auth({
   mode?: string;
 }) {
   const [store, setStore] = useStore();
-  const { isConfigured, signIn, signUp, signOut } = useAuth();
+  const { isConfigured, configDiagnostics, signIn, signUp, signOut } = useAuth();
+  const hasPartialOrInvalidSupabaseConfig =
+    !isConfigured &&
+    (configDiagnostics.urlPresent || configDiagnostics.anonKeyPresent);
   // Se mode for "login" ou initialTab for "login", inicia em login; caso contrário em registo
   const [tab, setTab] = useState<AuthTab>(
     mode === "login" || initialTab === "login" ? "login" : "register"
   );
+
+  const formatSupabaseAuthError = (err: any): string => {
+    const rawMsg =
+      typeof err?.message === "string" && err.message.trim()
+        ? err.message.trim()
+        : "Erro desconhecido ao comunicar com o Supabase Auth.";
+    const code = typeof err?.code === "string" ? err.code.toLowerCase() : "";
+    const status = typeof err?.status === "number" ? err.status : undefined;
+
+    if (
+      code === "invalid_credentials" ||
+      /^invalid login credentials$/i.test(rawMsg)
+    ) {
+      return "Email ou palavra-passe incorretos (invalid_credentials).";
+    }
+    if (
+      code === "email_not_confirmed" ||
+      /email not confirmed/i.test(rawMsg)
+    ) {
+      return `Email ainda não confirmado no Supabase Auth: ${rawMsg}`;
+    }
+    if (
+      err?.name === "AuthRetryableFetchError" ||
+      /failed to fetch|network|fetch|enotfound|err_name_not_resolved/i.test(rawMsg)
+    ) {
+      return `Erro de rede/ligação ao Supabase Auth (${rawMsg}). Verifique VITE_SUPABASE_URL (${configDiagnostics.resolvedUrl || "inválida"}) e a conectividade.`;
+    }
+    if (/invalid api key|apikey/i.test(rawMsg)) {
+      return `Chave pública VITE_SUPABASE_ANON_KEY rejeitada pelo Supabase (${rawMsg}).`;
+    }
+    if (status === 429 || /rate limit|too many requests/i.test(rawMsg)) {
+      return `Limite de pedidos excedido no Supabase Auth: ${rawMsg}`;
+    }
+    return `Erro do Supabase Auth${status ? ` (HTTP ${status})` : ""}${code ? ` [${code}]` : ""}: ${rawMsg}`;
+  };
 
   // --- 1. FORMULÁRIO DE CADASTRO DE CLIENTE (Público exclusivo para clientes) ---
   const [clientReg, setClientReg] = useState({
@@ -73,6 +111,15 @@ export function Auth({
     setClientRegErrors(err);
     if (Object.keys(err).length === 0) {
       setRegLoading(true);
+      if (hasPartialOrInvalidSupabaseConfig) {
+        setClientRegErrors({
+          email:
+            configDiagnostics.error ||
+            "Configuração do Supabase inválida. Verifique VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.",
+        });
+        setRegLoading(false);
+        return;
+      }
       if (isConfigured) {
         try {
           const { error, user } = await signUp({
@@ -87,7 +134,7 @@ export function Auth({
             address: clientReg.address.trim(),
           });
           if (error) {
-            setClientRegErrors({ email: `Supabase Auth: ${error.message}` });
+            setClientRegErrors({ email: formatSupabaseAuthError(error) });
             setRegLoading(false);
             return;
           }
@@ -115,7 +162,7 @@ export function Auth({
           return;
         } catch (supabaseErr: any) {
           setClientRegErrors({
-            email: `Falha ao comunicar com Supabase Auth: ${supabaseErr?.message || "Erro desconhecido"}`,
+            email: formatSupabaseAuthError(supabaseErr),
           });
           setRegLoading(false);
           return;
@@ -169,6 +216,16 @@ export function Auth({
 
     setLoginLoading(true);
 
+    // Se existir configuração inválida/incompleta do Supabase, bloquear fallback local e mostrar erro real
+    if (hasPartialOrInvalidSupabaseConfig) {
+      setLoginError(
+        configDiagnostics.error ||
+          "Configuração do Supabase inválida. Verifique VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY."
+      );
+      setLoginLoading(false);
+      return;
+    }
+
     // Quando o Supabase está configurado, NUNCA permitir bypass local nem credenciais fixas no frontend
     if (isConfigured) {
       if (!ident.includes("@")) {
@@ -177,36 +234,41 @@ export function Auth({
         return;
       }
       try {
-        const { error, user, profile } = await signIn(ident, pass);
-        if (!error && user) {
+        const { error, user, session, profile } = await signIn(ident, pass);
+        if (error) {
+          setLoginError(formatSupabaseAuthError(error));
           setLoginLoading(false);
-          const currentRole = profile?.role || "CUSTOMER";
-          const dest =
-            currentRole === "ADMIN" || currentRole === "SUPER_ADMIN"
-              ? "/admin"
-              : currentRole === "OPERATIONS"
-              ? "/operacao"
-              : currentRole === "CUSTOMER_SUPPORT"
-              ? "/apoio"
-              : currentRole === "EMPLOYEE"
-              ? "/portal-funcionario"
-              : currentRole === "BUSINESS_PARTNER" || currentRole === "PARTNER"
-              ? "/portal-empresa"
-              : currentRole === "PROFESSIONAL"
-              ? "/portal-parceiro"
-              : currentRole === "SELLER"
-              ? "/praca/painel-vendedor"
-              : currentRole === "AFFILIATE"
-              ? "/praca/painel-afiliado"
-              : "/portal-cliente";
-          go(dest);
           return;
         }
-        setLoginError(`Credenciais inválidas no Supabase: ${error?.message || "Email ou palavra-passe incorretos."}`);
+        if (!user || !session) {
+          setLoginError("O Supabase Auth não criou uma sessão ativa para este utilizador.");
+          setLoginLoading(false);
+          return;
+        }
         setLoginLoading(false);
+        const currentRole = profile?.role || "CUSTOMER";
+        const dest =
+          currentRole === "ADMIN" || currentRole === "SUPER_ADMIN"
+            ? "/admin"
+            : currentRole === "OPERATIONS"
+            ? "/operacao"
+            : currentRole === "CUSTOMER_SUPPORT"
+            ? "/apoio"
+            : currentRole === "EMPLOYEE"
+            ? "/portal-funcionario"
+            : currentRole === "BUSINESS_PARTNER" || currentRole === "PARTNER"
+            ? "/portal-empresa"
+            : currentRole === "PROFESSIONAL"
+            ? "/portal-parceiro"
+            : currentRole === "SELLER"
+            ? "/praca/painel-vendedor"
+            : currentRole === "AFFILIATE"
+            ? "/praca/painel-afiliado"
+            : "/portal-cliente";
+        go(dest);
         return;
       } catch (authErr: any) {
-        setLoginError(`Falha na autenticação Supabase: ${authErr?.message || "Erro de rede"}`);
+        setLoginError(formatSupabaseAuthError(authErr));
         setLoginLoading(false);
         return;
       }
@@ -412,8 +474,11 @@ export function Auth({
   };
 
   const quickLoginAs = (role: UserRole) => {
-    if (isConfigured) {
-      setLoginError("O acesso rápido de demonstração está desativado porque o Supabase Auth está ativo.");
+    if (isConfigured || hasPartialOrInvalidSupabaseConfig) {
+      setLoginError(
+        configDiagnostics.error ||
+          "O acesso rápido de demonstração está desativado porque o Supabase Auth está ativo."
+      );
       return;
     }
     if (role === "SUPER_ADMIN" || role === "ADMIN") {
@@ -890,6 +955,19 @@ export function Auth({
                 <p className="font-bold">Autenticação Real Ativa (Supabase Auth)</p>
                 <p className="text-emerald-800 mt-0.5">
                   O acesso aos perfis operacionais e administrativos é validado exclusivamente por email, palavra-passe e papel atribuído na base de dados.
+                </p>
+                <p className="text-[11px] font-mono text-emerald-700 mt-1">
+                  Endpoint base: {configDiagnostics.resolvedUrl}
+                </p>
+              </div>
+            </div>
+          ) : hasPartialOrInvalidSupabaseConfig ? (
+            <div className="mt-8 rounded-2xl border border-red-200 bg-red-50/80 p-4 text-xs text-red-900 flex items-start gap-2.5">
+              <Icon name="AlertTriangle" className="size-4 shrink-0 text-red-600 mt-0.5" />
+              <div>
+                <p className="font-bold">Configuração do Supabase Inválida</p>
+                <p className="text-red-800 mt-0.5">
+                  {configDiagnostics.error}
                 </p>
               </div>
             </div>

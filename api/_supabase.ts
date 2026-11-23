@@ -83,14 +83,48 @@ export const OPERATIONAL_STATE_KEYS = new Set([
 ]);
 
 export function getSupabaseServerConfig() {
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  const rawUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "")
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .trim();
+  const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "")
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .trim();
+
+  let url = "";
+  let urlValid = false;
+  if (
+    rawUrl &&
+    !/\s/.test(rawUrl) &&
+    !rawUrl.includes("your-project") &&
+    !rawUrl.includes("placeholder-project")
+  ) {
+    try {
+      const parsed = new URL(rawUrl);
+      const isLocalHost =
+        parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+      const pathClean = parsed.pathname.replace(/\/+$/, "");
+      if (
+        (parsed.protocol === "https:" || (isLocalHost && parsed.protocol === "http:")) &&
+        !parsed.username &&
+        !parsed.password &&
+        !parsed.search &&
+        !parsed.hash &&
+        pathClean === ""
+      ) {
+        url = parsed.origin;
+        urlValid = true;
+      }
+    } catch {
+      urlValid = false;
+    }
+  }
+
   const configured = Boolean(
-    url &&
+    urlValid &&
+      url &&
       serviceRoleKey &&
-      url.startsWith("http") &&
-      !url.includes("your-project") &&
-      !url.includes("placeholder-project") &&
       !serviceRoleKey.includes("your-service-role-key")
   );
   return { url, serviceRoleKey, configured };
