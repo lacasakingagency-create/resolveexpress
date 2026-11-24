@@ -25,6 +25,7 @@ import {
 import { StatusPill } from "./Other";
 import {
   getAuthAccessToken,
+  getSupabaseConfigDiagnostics,
   isSupabaseConfigured,
   saveSupabaseProductStrict,
   updateSupabaseBookingStatus,
@@ -1308,6 +1309,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
   const storeCategories = getStoreCategories(store);
   const cat = storeCategories.find((c) => c.id === catId) || storeCategories[0];
   const disabled = cat ? !!store.disabledCats[cat.id] : false;
+  const supabaseDiag = getSupabaseConfigDiagnostics();
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 @3xl:px-8">
@@ -1345,10 +1347,13 @@ export function Admin({ initialTab }: { initialTab?: string }) {
               <Icon name={saveStatus.ok ? "Check" : "AlertTriangle"} className="size-3.5" />
               <span>{saveStatus.message}</span>
             </div>
-          ) : !isSupabaseConfigured() ? (
+          ) : !supabaseDiag.configured ? (
             <div
               className="flex items-center gap-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 px-3 py-1 text-[11px] font-bold text-amber-800"
-              title="Configure VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY para ativar a sincronização na nuvem."
+              title={
+                supabaseDiag.error ||
+                "Configure VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY para ativar a sincronização na nuvem."
+              }
             >
               <span className="size-2 rounded-full bg-amber-500" />
               <span>Supabase não configurado</span>
@@ -1376,6 +1381,38 @@ export function Admin({ initialTab }: { initialTab?: string }) {
           )}
         </div>
       </div>
+
+      {!supabaseDiag.configured && (
+        <div className="mb-6 rounded-2xl border border-amber-300 bg-amber-50/80 p-4 text-xs text-amber-950 space-y-1.5">
+          <div className="flex items-center gap-2 font-bold text-amber-900">
+            <Icon name="AlertTriangle" className="size-4 shrink-0 text-amber-700" />
+            <span>Diagnóstico de Ligação Supabase (Bundle de Produção)</span>
+          </div>
+          <p className="text-amber-900">{supabaseDiag.error}</p>
+          <div className="flex flex-wrap gap-3 pt-1 text-[11px] font-mono text-amber-900/90">
+            <span>
+              VITE_SUPABASE_URL:{" "}
+              {supabaseDiag.urlValid
+                ? `OK (${supabaseDiag.resolvedUrl})`
+                : supabaseDiag.urlPresent
+                ? "Presente mas inválida"
+                : "Ausente no build"}
+            </span>
+            <span>·</span>
+            <span>
+              VITE_SUPABASE_ANON_KEY:{" "}
+              {supabaseDiag.keyValid
+                ? `OK (${supabaseDiag.keyFormat})`
+                : supabaseDiag.anonKeyPresent
+                ? "Presente mas inválida"
+                : "Ausente no build"}
+            </span>
+          </div>
+          <p className="text-[11px] text-amber-800">
+            Nota: Variáveis Vite (`VITE_*`) são compiladas no momento de `vite build`. Na Vercel, valide se estão ativas no ambiente Production e execute um Redeploy sem Build Cache.
+          </p>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="mb-6 flex gap-2 overflow-x-auto pb-2">

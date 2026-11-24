@@ -7,10 +7,24 @@ const RAW_ENV_SUPABASE_URL: string =
   (typeof import.meta !== "undefined" && import.meta.env
     ? import.meta.env.VITE_SUPABASE_URL
     : "") || "";
-const RAW_ENV_SUPABASE_ANON_KEY: string =
+const RAW_ENV_ANON_KEY_PRIMARY: string =
   (typeof import.meta !== "undefined" && import.meta.env
     ? import.meta.env.VITE_SUPABASE_ANON_KEY
     : "") || "";
+const RAW_ENV_PUBLISHABLE_KEY: string =
+  (typeof import.meta !== "undefined" && import.meta.env
+    ? import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+    : "") || "";
+const RAW_ENV_PUBLISHABLE_DEFAULT_KEY: string =
+  (typeof import.meta !== "undefined" && import.meta.env
+    ? import.meta.env.VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY
+    : "") || "";
+
+const RAW_ENV_SUPABASE_ANON_KEY: string =
+  RAW_ENV_ANON_KEY_PRIMARY ||
+  RAW_ENV_PUBLISHABLE_KEY ||
+  RAW_ENV_PUBLISHABLE_DEFAULT_KEY ||
+  "";
 
 export interface SupabaseUrlValidationResult {
   valid: boolean;
@@ -19,12 +33,21 @@ export interface SupabaseUrlValidationResult {
   error: string | null;
 }
 
+export type SupabaseKeyFormat =
+  | "sb_publishable"
+  | "jwt_anon"
+  | "custom"
+  | "missing"
+  | "invalid";
+
 export interface SupabaseConfigDiagnostics {
   configured: boolean;
   urlPresent: boolean;
   anonKeyPresent: boolean;
   resolvedUrl: string;
   urlValid: boolean;
+  keyValid: boolean;
+  keyFormat: SupabaseKeyFormat;
   error: string | null;
 }
 
@@ -52,7 +75,7 @@ export function validateAndNormalizeSupabaseUrl(rawUrl: string): SupabaseUrlVali
       valid: false,
       present: false,
       normalizedUrl: "",
-      error: "VITE_SUPABASE_URL está ausente.",
+      error: "VITE_SUPABASE_URL está ausente no bundle de produção.",
     };
   }
 
@@ -127,23 +150,60 @@ export function validateAndNormalizeSupabaseUrl(rawUrl: string): SupabaseUrlVali
   };
 }
 
-function normalizeAnonKey(rawKey: string): {
+/**
+ * Validates public Supabase client keys (both modern `sb_publishable_...` and legacy JWT `anon` keys).
+ * Explicitly blocks secret/service-role keys (`sb_secret_...`) from browser initialization.
+ */
+export function normalizeAnonKey(rawKey: string): {
   valid: boolean;
   present: boolean;
   cleanedKey: string;
+  keyFormat: SupabaseKeyFormat;
   error: string | null;
 } {
   const cleaned = stripOuterQuotes(typeof rawKey === "string" ? rawKey : "");
   if (!cleaned) {
-    return { valid: false, present: false, cleanedKey: "", error: "VITE_SUPABASE_ANON_KEY está ausente." };
+    return {
+      valid: false,
+      present: false,
+      cleanedKey: "",
+      keyFormat: "missing",
+      error: "VITE_SUPABASE_ANON_KEY está ausente no bundle de produção.",
+    };
   }
-  if (/\s/.test(cleaned)) {
-    return { valid: false, present: true, cleanedKey: "", error: "VITE_SUPABASE_ANON_KEY contém espaços ou quebras de linha inválidas." };
+  if (/\s/.test(cleaned) || /[\u0000-\u001F\u007F]/.test(cleaned)) {
+    return {
+      valid: false,
+      present: true,
+      cleanedKey: "",
+      keyFormat: "invalid",
+      error: "VITE_SUPABASE_ANON_KEY contém espaços ou quebras de linha inválidas.",
+    };
   }
   if (cleaned.includes("your-anon-key") || cleaned.includes("placeholder")) {
-    return { valid: false, present: false, cleanedKey: "", error: "VITE_SUPABASE_ANON_KEY contém um valor placeholder." };
+    return {
+      valid: false,
+      present: false,
+      cleanedKey: "",
+      keyFormat: "missing",
+      error: "VITE_SUPABASE_ANON_KEY contém um valor placeholder.",
+    };
   }
-  return { valid: true, present: true, cleanedKey: cleaned, error: null };
+  if (cleaned.startsWith("sb_secret_")) {
+    return {
+      valid: false,
+      present: true,
+      cleanedKey: "",
+      keyFormat: "invalid",
+      error: "Foi fornecida uma Secret Key (sb_secret_...) em VITE_SUPABASE_ANON_KEY. Use a Publishable Key (sb_publishable_...) ou a chave pública anon.",
+    };
+  }
+  const keyFormat: SupabaseKeyFormat = cleaned.startsWith("sb_publishable_")
+    ? "sb_publishable"
+    : cleaned.startsWith("eyJ")
+    ? "jwt_anon"
+    : "custom";
+  return { valid: true, present: true, cleanedKey: cleaned, keyFormat, error: null };
 }
 
 const urlValidation = validateAndNormalizeSupabaseUrl(RAW_ENV_SUPABASE_URL);
@@ -159,7 +219,8 @@ const supabaseAnonKey: string = keyValidation.valid ? keyValidation.cleanedKey :
 export function getSupabaseConfigDiagnostics(): SupabaseConfigDiagnostics {
   const configured = Boolean(urlValidation.valid && keyValidation.valid);
   const error = !configured
-    ? urlValidation.error || keyValidation.error || "Supabase não está configurado."
+    ? [urlValidation.error, keyValidation.error].filter(Boolean).join(" ") ||
+      "Supabase não está configurado."
     : null;
   return {
     configured,
@@ -167,6 +228,8 @@ export function getSupabaseConfigDiagnostics(): SupabaseConfigDiagnostics {
     anonKeyPresent: keyValidation.present,
     resolvedUrl: supabaseUrl,
     urlValid: urlValidation.valid,
+    keyValid: keyValidation.valid,
+    keyFormat: keyValidation.keyFormat,
     error,
   };
 }
