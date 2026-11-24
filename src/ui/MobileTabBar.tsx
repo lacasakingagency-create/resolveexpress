@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Icon, go } from "./kit";
 import { useStore } from "../lib/store";
+import { getDashboardRouteForRole } from "../lib/AuthContext";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -47,20 +48,7 @@ export function MobileTabBar({
 
   const getAccountRoute = () => {
     if (!store.currentUser) return "/entrar";
-    switch (store.currentUser.role) {
-      case "ADMIN":
-      case "SUPER_ADMIN":
-        return "/admin";
-      case "EMPLOYEE":
-        return "/portal-funcionario";
-      case "PARTNER":
-        return "/portal-empresa";
-      case "PROFESSIONAL":
-        return "/portal-parceiro";
-      case "CUSTOMER":
-      default:
-        return "/portal-cliente";
-    }
+    return getDashboardRouteForRole(store.currentUser.role) || "/entrar";
   };
 
   return (

@@ -8,7 +8,7 @@ import {
   DEMO_SUPPORT_USER,
 } from "../lib/store";
 import { LOCATIONS, ANGOLA_PROVINCES } from "../lib/data";
-import { useAuth } from "../lib/AuthContext";
+import { useAuth, getDashboardRouteForRole } from "../lib/AuthContext";
 
 type AuthTab = "register" | "login";
 
@@ -20,7 +20,17 @@ export function Auth({
   mode?: string;
 }) {
   const [store, setStore] = useStore();
-  const { isConfigured, configDiagnostics, signIn, signUp, signOut } = useAuth();
+  const {
+    isConfigured,
+    configDiagnostics,
+    session,
+    profileStatus,
+    profileError,
+    refreshProfile,
+    signIn,
+    signUp,
+    signOut,
+  } = useAuth();
   const hasPartialOrInvalidSupabaseConfig =
     !isConfigured &&
     (configDiagnostics.urlPresent || configDiagnostics.anonKeyPresent);
@@ -234,7 +244,8 @@ export function Auth({
         return;
       }
       try {
-        const { error, user, session, profile } = await signIn(ident, pass);
+        const { error, user, session, profile, profileError: signInProfileError } =
+          await signIn(ident, pass);
         if (error) {
           setLoginError(formatSupabaseAuthError(error));
           setLoginLoading(false);
@@ -245,26 +256,23 @@ export function Auth({
           setLoginLoading(false);
           return;
         }
+        if (!profile) {
+          setLoginError(
+            signInProfileError ||
+              "Sessão autenticada, mas o perfil não foi carregado de public.profiles. Por segurança, o acesso não foi assumido como cliente."
+          );
+          setLoginLoading(false);
+          return;
+        }
+        const dest = getDashboardRouteForRole(profile.role);
+        if (!dest) {
+          setLoginError(
+            `Papel de utilizador desconhecido ('${String(profile.role)}'). Contacte a administração.`
+          );
+          setLoginLoading(false);
+          return;
+        }
         setLoginLoading(false);
-        const currentRole = profile?.role || "CUSTOMER";
-        const dest =
-          currentRole === "ADMIN" || currentRole === "SUPER_ADMIN"
-            ? "/admin"
-            : currentRole === "OPERATIONS"
-            ? "/operacao"
-            : currentRole === "CUSTOMER_SUPPORT"
-            ? "/apoio"
-            : currentRole === "EMPLOYEE"
-            ? "/portal-funcionario"
-            : currentRole === "BUSINESS_PARTNER" || currentRole === "PARTNER"
-            ? "/portal-empresa"
-            : currentRole === "PROFESSIONAL"
-            ? "/portal-parceiro"
-            : currentRole === "SELLER"
-            ? "/praca/painel-vendedor"
-            : currentRole === "AFFILIATE"
-            ? "/praca/painel-afiliado"
-            : "/portal-cliente";
         go(dest);
         return;
       } catch (authErr: any) {
@@ -574,7 +582,7 @@ export function Auth({
           active: true,
         },
       }));
-      go("/praca/afiliados");
+      go("/praca/painel-afiliado");
     } else {
       setStore(() => ({ currentUser: DEMO_CLIENT_USER }));
       go("/portal-cliente");
@@ -583,6 +591,45 @@ export function Auth({
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-10 sm:py-16 @3xl:px-8">
+      {/* Aviso explícito se houver sessão Supabase sem perfil válido em public.profiles */}
+      {isConfigured && session && !store.currentUser && (profileStatus === "error" || profileStatus === "missing") && (
+        <div className="mb-8 rounded-2xl border-2 border-red-300 bg-red-50 p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <Icon name="ShieldAlert" className="size-6 shrink-0 text-red-600 mt-0.5" />
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-red-700">
+                Erro de Validação do Perfil
+              </p>
+              <p className="text-sm font-semibold text-red-900 mt-0.5">
+                {profileError || "Sessão autenticada sem perfil válido em public.profiles."}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Btn
+              kind="action"
+              className="text-xs min-h-9 px-3"
+              onClick={async () => {
+                const outcome = await refreshProfile();
+                const target = getDashboardRouteForRole(outcome?.profile?.role);
+                if (target) go(target);
+              }}
+            >
+              Tentar Novamente
+            </Btn>
+            <button
+              type="button"
+              onClick={async () => {
+                await signOut();
+              }}
+              className="px-3 py-2 text-xs font-bold text-red-700 hover:underline cursor-pointer"
+            >
+              Sair
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Indicador de Sessão Ativa se já houver utilizador logado */}
       {store.currentUser && (
         <div className="mb-8 rounded-2xl border-2 border-action/40 bg-action/5 p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
@@ -607,26 +654,8 @@ export function Auth({
               kind="action"
               className="text-xs min-h-10 px-4"
               onClick={() => {
-                const role = store.currentUser?.role;
-                const target =
-                  role === "ADMIN" || role === "SUPER_ADMIN"
-                    ? "/admin"
-                    : role === "OPERATIONS"
-                    ? "/operacao"
-                    : role === "CUSTOMER_SUPPORT"
-                    ? "/apoio"
-                    : role === "SELLER"
-                    ? "/praca/painel-vendedor"
-                    : role === "AFFILIATE"
-                    ? "/praca/afiliados"
-                    : role === "EMPLOYEE"
-                    ? "/portal-funcionario"
-                    : role === "PARTNER" || role === "BUSINESS_PARTNER"
-                    ? "/portal-empresa"
-                    : role === "PROFESSIONAL"
-                    ? "/portal-parceiro"
-                    : "/portal-cliente";
-                go(target);
+                const target = getDashboardRouteForRole(store.currentUser?.role);
+                if (target) go(target);
               }}
             >
               Ir para o Meu Ambiente <Icon name="ArrowRight" className="size-4" />

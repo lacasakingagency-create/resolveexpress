@@ -764,8 +764,11 @@ export async function syncWalletToSupabase(
    AUTHENTICATION & PROFILE SERVICES (SUPABASE AUTH + PROFILES)
    ============================================================================== */
 
-export function mapDbRoleToUserRole(dbRole: string): import("./store").UserRole {
-  switch (dbRole) {
+export function mapDbRoleToUserRoleStrict(
+  dbRole?: string | null
+): import("./store").UserRole | null {
+  if (typeof dbRole !== "string") return null;
+  switch (dbRole.trim().toLowerCase()) {
     case "super_admin":
       return "SUPER_ADMIN";
     case "admin":
@@ -785,9 +788,14 @@ export function mapDbRoleToUserRole(dbRole: string): import("./store").UserRole 
     case "afiliado":
       return "AFFILIATE";
     case "cliente":
-    default:
       return "CUSTOMER";
+    default:
+      return null;
   }
+}
+
+export function mapDbRoleToUserRole(dbRole: string): import("./store").UserRole {
+  return mapDbRoleToUserRoleStrict(dbRole) || "CUSTOMER";
 }
 
 export function mapUserRoleToDbRole(role: import("./store").UserRole): string {
@@ -879,27 +887,74 @@ export async function signOutSupabase() {
   return await supabase.auth.signOut();
 }
 
+export interface SupabaseProfileFetchResult {
+  ok: boolean;
+  profile: any | null;
+  error?: string | null;
+}
+
 /**
- * Fetch user profile from public.profiles
+ * Fetch user profile from public.profiles with explicit error reporting.
+ * Distinguishes query/RLS/network failure (ok: false) from missing row (ok: true, profile: null).
  */
-export async function getSupabaseProfile(userId: string) {
-  if (!isSupabaseConfigured() || !userId) return null;
+export async function getSupabaseProfileDetailed(
+  userId: string
+): Promise<SupabaseProfileFetchResult> {
+  if (!isSupabaseConfigured()) {
+    return {
+      ok: false,
+      profile: null,
+      error: "Supabase não está configurado.",
+    };
+  }
+  if (!userId) {
+    return {
+      ok: false,
+      profile: null,
+      error: "UUID do utilizador autenticado em falta.",
+    };
+  }
   try {
     const { data, error } = await supabase
       .from("profiles")
-      .select("*")
+      .select("id, email, full_name, phone, role, province, municipio, bairro, avatar_url")
       .eq("id", userId)
       .maybeSingle();
 
     if (error) {
       console.warn("Error fetching Supabase profile:", error.message);
-      return null;
+      return {
+        ok: false,
+        profile: null,
+        error: `Erro ao consultar public.profiles: ${error.message}`,
+      };
     }
-    return data;
-  } catch (err) {
+
+    if (!data) {
+      return {
+        ok: true,
+        profile: null,
+        error: "Perfil não encontrado em public.profiles para o utilizador autenticado.",
+      };
+    }
+
+    return { ok: true, profile: data, error: null };
+  } catch (err: any) {
     console.warn("Exception fetching Supabase profile:", err);
-    return null;
+    return {
+      ok: false,
+      profile: null,
+      error: err?.message || "Exceção de rede ao consultar public.profiles.",
+    };
   }
+}
+
+/**
+ * Fetch user profile from public.profiles
+ */
+export async function getSupabaseProfile(userId: string) {
+  const res = await getSupabaseProfileDetailed(userId);
+  return res.ok ? res.profile : null;
 }
 
 /**

@@ -1,6 +1,6 @@
 import React from "react";
 import { useStore, type UserRole } from "./store";
-import { useAuth } from "./AuthContext";
+import { useAuth, getDashboardRouteForRole } from "./AuthContext";
 import { Icon, Btn, go } from "../ui/kit";
 
 interface ProtectedRouteProps {
@@ -17,9 +17,17 @@ export function ProtectedRoute({
   roleTitle = "Ambiente Restrito",
 }: ProtectedRouteProps) {
   const [store] = useStore();
-  const { loading } = useAuth();
+  const {
+    loading,
+    isConfigured,
+    session,
+    profileStatus,
+    profileError,
+    refreshProfile,
+    signOut,
+  } = useAuth();
 
-  if (loading) {
+  if (loading || (isConfigured && session && profileStatus === "loading")) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center p-8 text-center">
         <Icon name="Loader2" className="size-10 animate-spin text-action mb-4" />
@@ -30,6 +38,47 @@ export function ProtectedRoute({
   }
 
   const currentUser = store.currentUser;
+
+  // Authenticated Supabase session whose profile could not be loaded or is missing in public.profiles
+  if (isConfigured && session && !currentUser) {
+    return (
+      <div className="mx-auto max-w-xl px-4 py-16 text-center">
+        <div className="rounded-2xl border border-red-200 bg-paper p-8 shadow-lg">
+          <span className="mx-auto grid size-16 place-items-center rounded-2xl bg-red-50 text-red-600 mb-4">
+            <Icon name="ShieldAlert" className="size-8" />
+          </span>
+          <h2 className="font-display text-2xl font-black text-primary">
+            Falha ao Validar Perfil
+          </h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {profileError ||
+              "A sessão está autenticada, mas não foi possível confirmar o perfil em public.profiles."}
+          </p>
+          <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
+            <Btn
+              kind="action"
+              onClick={async () => {
+                await refreshProfile();
+              }}
+              className="w-full sm:w-auto"
+            >
+              Tentar Novamente
+            </Btn>
+            <Btn
+              kind="ghost"
+              onClick={async () => {
+                await signOut();
+                go(redirectPath);
+              }}
+              className="w-full sm:w-auto"
+            >
+              Terminar Sessão
+            </Btn>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // 1. Not authenticated
   if (!currentUser) {
@@ -95,24 +144,7 @@ export function ProtectedRoute({
             <Btn
               kind="action"
               onClick={() => {
-                const target =
-                  currentUser.role === "CUSTOMER"
-                    ? "/portal-cliente"
-                    : currentUser.role === "EMPLOYEE"
-                    ? "/portal-funcionario"
-                    : currentUser.role === "BUSINESS_PARTNER" || currentUser.role === "PARTNER"
-                    ? "/portal-empresa"
-                    : currentUser.role === "PROFESSIONAL"
-                    ? "/portal-parceiro"
-                    : currentUser.role === "SELLER"
-                    ? "/praca/painel-vendedor"
-                    : currentUser.role === "AFFILIATE"
-                    ? "/praca/afiliados"
-                    : currentUser.role === "OPERATIONS"
-                    ? "/operacao"
-                    : currentUser.role === "CUSTOMER_SUPPORT"
-                    ? "/apoio"
-                    : "/";
+                const target = getDashboardRouteForRole(currentUser.role) || "/";
                 go(target);
               }}
               className="w-full sm:w-auto"
