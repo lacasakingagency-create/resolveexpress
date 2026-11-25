@@ -189,11 +189,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // (e.g. signup / first login after email confirmation when trigger hadn't run yet),
       // safely create/upsert the client profile via auth.uid() and re-verify.
       const normalizedEmail = (currentUser.email || "").trim().toLowerCase();
+      const metaRole = String(currentUser.user_metadata?.role || "").trim().toLowerCase();
       const shouldRecoverClientProfile =
         result.ok &&
         !result.profile &&
         normalizedEmail !== "admin@resolvemcx.ao" &&
-        (options?.ensureIfMissingClient || currentUser.user_metadata?.role === "cliente");
+        (options?.ensureIfMissingClient || !metaRole || metaRole === "cliente");
 
       if (shouldRecoverClientProfile) {
         result = await ensureClientProfileStrict(currentUser, options?.overrideMeta);

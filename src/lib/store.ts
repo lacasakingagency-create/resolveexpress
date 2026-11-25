@@ -57,7 +57,7 @@ import {
 
 export type { ImportQuoteRequest, IntermediaryListing, IntermediaryNegotiation, VirtualCardRequest };
 
-export type SectionHeroKey = "praca" | "importacao" | "intermediario" | "loja";
+export type SectionHeroKey = "servicos" | "praca" | "importacao" | "intermediario" | "loja";
 
 export interface SectionHeroConfig {
   image: string;
@@ -1496,7 +1496,7 @@ export const applyServerStateUpdates = (serverState: any) => {
     if (nextState.sectionHeroes && typeof nextState.sectionHeroes === "object") {
       const updatedHeroes = { ...nextState.sectionHeroes };
       let heroesChanged = false;
-      (["praca", "importacao", "intermediario", "loja"] as SectionHeroKey[]).forEach((heroKey) => {
+      (["servicos", "praca", "importacao", "intermediario", "loja"] as SectionHeroKey[]).forEach((heroKey) => {
         const currentHero = updatedHeroes[heroKey];
         const resolved = resolvePublicRefUrl(refs, `sectionHero:${heroKey}`, currentHero?.image);
         if (resolved && resolved !== currentHero?.image) {

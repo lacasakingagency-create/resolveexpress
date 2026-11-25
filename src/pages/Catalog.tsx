@@ -55,11 +55,26 @@ export function Catalog({ q }: { q?: string | null }) {
     return result;
   }, [allServices, selectedCatId, search]);
 
+  const servicosHero = store.sectionHeroes?.servicos;
+  const hasServicosHeroImg = Boolean(servicosHero?.active !== false && servicosHero?.image?.trim());
+
   return (
     <div className="space-y-8 pb-12">
       {/* Page Header */}
-      <div className="bg-primary text-white py-12 px-4 border-b border-border">
-        <div className="mx-auto max-w-6xl space-y-4">
+      <div className="relative overflow-hidden bg-primary text-white py-12 px-4 border-b border-border">
+        {hasServicosHeroImg && (
+          <>
+            <img
+              src={servicosHero!.image.trim()}
+              alt="Serviços Especializados ao Domicílio"
+              className={`absolute inset-0 h-full w-full pointer-events-none ${
+                servicosHero?.imageFit === "contain" ? "object-contain bg-[#071B33]" : "object-cover"
+              }`}
+            />
+            <div className="absolute inset-0 bg-gradient-to-br from-[#071B33]/85 via-[#071B33]/75 to-[#12365A]/85 pointer-events-none" />
+          </>
+        )}
+        <div className="relative z-10 mx-auto max-w-6xl space-y-4">
           <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3.5 py-1 text-xs font-semibold backdrop-blur-xs text-action">
             <Icon name="Sparkles" className="size-3.5" /> Catálogo de Serviços Profissionais
           </div>

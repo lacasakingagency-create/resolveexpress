@@ -561,6 +561,7 @@ export function PracaAdminSection() {
     setSavingPracaProd(true);
     setPracaProdError(null);
 
+    let confirmedProd: Product = normalizedProd;
     if (isSupabaseConfigured()) {
       const sbRes = await saveSupabaseProductStrict(normalizedProd);
       if (!sbRes.ok) {
@@ -570,24 +571,27 @@ export function PracaAdminSection() {
         );
         return;
       }
+      if (sbRes.product) {
+        confirmedProd = sbRes.product;
+      }
     }
 
     const res = await saveAdminStateAsync(
       (s) => {
         const nextRefs = { ...(s.assetRefs || {}) };
         if (pracaProdAssetRef) {
-          nextRefs[`product:${normalizedProd.id}`] = pracaProdAssetRef;
+          nextRefs[`product:${confirmedProd.id}`] = pracaProdAssetRef;
         }
-        const exists = s.products.some((p) => p.id === normalizedProd.id);
+        const exists = s.products.some((p) => p.id === confirmedProd.id);
         return {
           products: exists
-            ? s.products.map((p) => (p.id === normalizedProd.id ? normalizedProd : p))
-            : [normalizedProd, ...s.products],
+            ? s.products.map((p) => (p.id === confirmedProd.id ? confirmedProd : p))
+            : [confirmedProd, ...s.products],
           assetRefs: nextRefs,
         };
       },
       isCreatingPracaProd ? "Criação de Produto da Praça" : "Edição de Produto da Praça",
-      `Produto: ${normalizedProd.name} (${normalizedProd.id})`
+      `Produto: ${confirmedProd.name} (${confirmedProd.id})`
     );
     setSavingPracaProd(false);
 
@@ -1620,7 +1624,12 @@ export function PracaAdminSection() {
             </div>
             <button
               type="button"
-              onClick={() => setShowAddCategory(true)}
+              onClick={() => {
+                setCatSaveError(null);
+                setCatAssetRef(null);
+                setEditingCategory(null);
+                setShowAddCategory(true);
+              }}
               className="inline-flex items-center gap-1.5 rounded-xl bg-[#E6540F] px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-[#cf490a]"
             >
               <Icon name="Plus" className="size-4" />
@@ -1901,7 +1910,12 @@ export function PracaAdminSection() {
                   <div className="flex gap-1.5">
                     <button
                       type="button"
-                      onClick={() => setEditingCategory(c)}
+                      onClick={() => {
+                        setCatSaveError(null);
+                        setCatAssetRef(null);
+                        setShowAddCategory(false);
+                        setEditingCategory({ ...c });
+                      }}
                       className="rounded p-1 text-slate-600 hover:bg-slate-100"
                       title="Editar categoria"
                     >

@@ -11,7 +11,7 @@ export function IntermediarioAdminSection() {
   const [store, setStore] = useStore();
   const [activeTab, setActiveTab] = useState<"listings" | "categories" | "negotiations">("listings");
   const [isSaving, setIsSaving] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ ok: boolean; message: string } | null>(null);
 
   const listings = store.intermediaryListings || [];
   const categories = store.intermediaryCategories || [];
@@ -31,8 +31,10 @@ export function IntermediarioAdminSection() {
     );
     setIsSaving(false);
     if (res.ok) {
-      setFeedback("Estado da categoria atualizado com sucesso!");
+      setFeedback({ ok: true, message: "Estado da categoria atualizado e gravado no Supabase!" });
       setTimeout(() => setFeedback(null), 3000);
+    } else {
+      setFeedback({ ok: false, message: `Falha ao atualizar categoria no Supabase: ${res.error || "Erro desconhecido"}` });
     }
   };
 
@@ -53,8 +55,10 @@ export function IntermediarioAdminSection() {
     );
     setIsSaving(false);
     if (res.ok) {
-      setFeedback(`Anúncio atualizado para "${status}" com sucesso!`);
+      setFeedback({ ok: true, message: `Anúncio atualizado para "${status}" no Supabase!` });
       setTimeout(() => setFeedback(null), 3500);
+    } else {
+      setFeedback({ ok: false, message: `Falha ao atualizar anúncio no Supabase: ${res.error || "Erro desconhecido"}` });
     }
   };
 
@@ -71,8 +75,10 @@ export function IntermediarioAdminSection() {
     );
     setIsSaving(false);
     if (res.ok) {
-      setFeedback("Destaque atualizado com sucesso!");
+      setFeedback({ ok: true, message: "Destaque atualizado e gravado no Supabase!" });
       setTimeout(() => setFeedback(null), 3000);
+    } else {
+      setFeedback({ ok: false, message: `Falha ao atualizar destaque no Supabase: ${res.error || "Erro desconhecido"}` });
     }
   };
 
@@ -88,8 +94,10 @@ export function IntermediarioAdminSection() {
     );
     setIsSaving(false);
     if (res.ok) {
-      setFeedback("Anúncio eliminado com sucesso!");
+      setFeedback({ ok: true, message: "Anúncio eliminado e sincronizado no Supabase!" });
       setTimeout(() => setFeedback(null), 3000);
+    } else {
+      setFeedback({ ok: false, message: `Falha ao eliminar anúncio no Supabase: ${res.error || "Erro desconhecido"}` });
     }
   };
 
@@ -110,8 +118,10 @@ export function IntermediarioAdminSection() {
     );
     setIsSaving(false);
     if (res.ok) {
-      setFeedback(`Processo de negociação atualizado para "${status}"!`);
+      setFeedback({ ok: true, message: `Processo de negociação atualizado para "${status}" no Supabase!` });
       setTimeout(() => setFeedback(null), 3000);
+    } else {
+      setFeedback({ ok: false, message: `Falha ao atualizar negociação no Supabase: ${res.error || "Erro desconhecido"}` });
     }
   };
 
@@ -119,9 +129,18 @@ export function IntermediarioAdminSection() {
     <div className="space-y-6">
       {/* Feedback Banner */}
       {feedback && (
-        <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-3.5 text-xs font-bold text-emerald-800 dark:text-emerald-300 animate-in fade-in">
-          <Icon name="CheckCircle2" className="size-4 text-emerald-600 shrink-0" />
-          <span>{feedback}</span>
+        <div
+          className={`flex items-center gap-2 rounded-xl border p-3.5 text-xs font-bold animate-in fade-in ${
+            feedback.ok
+              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-800 dark:text-emerald-300"
+              : "bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-300"
+          }`}
+        >
+          <Icon
+            name={feedback.ok ? "CheckCircle2" : "AlertTriangle"}
+            className={`size-4 shrink-0 ${feedback.ok ? "text-emerald-600" : "text-red-600"}`}
+          />
+          <span>{feedback.message}</span>
         </div>
       )}
 

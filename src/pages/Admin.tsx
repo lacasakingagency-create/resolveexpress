@@ -273,6 +273,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
   const [newProdEstimatedDelivery, setNewProdEstimatedDelivery] = useState("30 a 60 minutos");
   const [newProdWarranty, setNewProdWarranty] = useState("");
   const [newProdAvailable, setNewProdAvailable] = useState(true);
+  const [productFormError, setProductFormError] = useState<string | null>(null);
   const [heroFormError, setHeroFormError] = useState<string | null>(null);
 
   // Section Heroes (Areas B & C) editor modal state
@@ -573,6 +574,13 @@ export function Admin({ initialTab }: { initialTab?: string }) {
     subtitle: string;
     route: string;
   }> = [
+    {
+      key: "servicos",
+      areaBadge: "Área A · Serviços",
+      label: "Hero — Serviços Especializados ao Domicílio",
+      subtitle: "Cabeçalho visual da página principal do Catálogo de Serviços",
+      route: "/servicos",
+    },
     {
       key: "praca",
       areaBadge: "Área B · PRAÇA",
@@ -927,11 +935,9 @@ export function Admin({ initialTab }: { initialTab?: string }) {
   // Product handlers (synchronized with public.products + platform_settings)
   const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
+    setProductFormError(null);
     if (!newProdName.trim() || newProdPrice <= 0) {
-      setSaveStatus({
-        message: "Indique um nome válido e um preço superior a 0 AOA.",
-        ok: false,
-      });
+      setProductFormError("Indique um nome válido e um preço superior a 0 AOA.");
       return;
     }
     const pracaCatObj = newProdIsPraca
@@ -979,14 +985,17 @@ export function Admin({ initialTab }: { initialTab?: string }) {
         : undefined,
     };
 
+    let confirmedProd: Product = newProd;
     if (isSupabaseConfigured()) {
       const sbRes = await saveSupabaseProductStrict(newProd);
       if (!sbRes.ok) {
-        setSaveStatus({
-          message: `Falha ao gravar produto em public.products: ${sbRes.error || "Erro desconhecido"}`,
-          ok: false,
-        });
+        const msg = `Falha ao gravar produto em public.products: ${sbRes.error || "Erro desconhecido"}`;
+        setProductFormError(msg);
+        setSaveStatus({ message: msg, ok: false });
         return;
+      }
+      if (sbRes.product) {
+        confirmedProd = sbRes.product;
       }
     }
 
@@ -994,22 +1003,27 @@ export function Admin({ initialTab }: { initialTab?: string }) {
       (st) => {
         const nextRefs = { ...(st.assetRefs || {}) };
         if (newProdAssetRef) {
-          nextRefs[`product:${newProd.id}`] = newProdAssetRef;
+          nextRefs[`product:${confirmedProd.id}`] = newProdAssetRef;
         }
         const featList = st.featuredProducts || [];
         return {
-          products: [newProd, ...st.products],
+          products: [confirmedProd, ...st.products],
           featuredProducts:
-            newProdFeatured && !featList.includes(newProd.id)
-              ? [newProd.id, ...featList]
+            newProdFeatured && !featList.includes(confirmedProd.id)
+              ? [confirmedProd.id, ...featList]
               : featList,
           assetRefs: nextRefs,
         };
       },
       "Criação de Produto",
-      `Produto adicionado: ${newProd.name} (${newProd.priceAOA} Kz)`
+      `Produto adicionado: ${confirmedProd.name} (${confirmedProd.priceAOA} Kz)`
     );
+    if (!ok) {
+      setProductFormError("Produto gravado na tabela, mas falhou a sincronização do catálogo partilhado.");
+      return;
+    }
     if (ok) {
+      setProductFormError(null);
       setShowAddProduct(false);
       setNewProdName("");
       setNewProdDesc("");
@@ -1176,25 +1190,41 @@ export function Admin({ initialTab }: { initialTab?: string }) {
   };
 
   const handleOpenEditProduct = (prod: Product) => {
+    setProductFormError(null);
     setEditProdAssetRef(null);
     setEditingProduct({ ...prod, imageFit: prod.imageFit || "cover" });
   };
 
   const handleSaveEditProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingProduct || !editingProduct.name.trim()) return;
+    setProductFormError(null);
+    if (!editingProduct || !editingProduct.name.trim()) {
+      setProductFormError("O nome do produto é obrigatório.");
+      return;
+    }
+    if (Number(editingProduct.priceAOA) <= 0) {
+      setProductFormError("O preço deve ser superior a 0 AOA.");
+      return;
+    }
+    if (Number(editingProduct.stock) < 0) {
+      setProductFormError("O stock não pode ser negativo.");
+      return;
+    }
     const oldProduct = store.products.find((p: Product) => p.id === editingProduct.id);
     const oldImg = oldProduct?.image;
     const newImg = editingProduct.image;
 
+    let confirmedProd: Product = editingProduct;
     if (isSupabaseConfigured()) {
       const sbRes = await saveSupabaseProductStrict(editingProduct);
       if (!sbRes.ok) {
-        setSaveStatus({
-          message: `Falha ao atualizar produto no Supabase: ${sbRes.error || "Erro desconhecido"}`,
-          ok: false,
-        });
+        const msg = `Falha ao atualizar produto no Supabase: ${sbRes.error || "Erro desconhecido"}`;
+        setProductFormError(msg);
+        setSaveStatus({ message: msg, ok: false });
         return;
+      }
+      if (sbRes.product) {
+        confirmedProd = sbRes.product;
       }
     }
 
@@ -1202,22 +1232,28 @@ export function Admin({ initialTab }: { initialTab?: string }) {
       (st) => {
         const nextRefs = { ...(st.assetRefs || {}) };
         if (editProdAssetRef) {
-          nextRefs[`product:${editingProduct.id}`] = editProdAssetRef;
+          nextRefs[`product:${confirmedProd.id}`] = editProdAssetRef;
         }
         return {
-          products: st.products.map((p: Product) => (p.id === editingProduct.id ? editingProduct : p)),
+          products: st.products.map((p: Product) => (p.id === confirmedProd.id ? confirmedProd : p)),
           assetRefs: nextRefs,
         };
       },
       "Edição de Produto",
-      `Produto atualizado: ${editingProduct.name}`
+      `Produto atualizado: ${confirmedProd.name}`
     );
+
+    if (!ok) {
+      setProductFormError("Produto gravado na tabela, mas falhou a sincronização do catálogo partilhado.");
+      return;
+    }
 
     if (ok && oldImg && newImg && oldImg !== newImg) {
       await safeReplaceImage(oldImg, newImg);
     }
 
     if (ok) {
+      setProductFormError(null);
       setEditProdAssetRef(null);
       setEditingProduct(null);
     }
@@ -2269,10 +2305,10 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="rounded-full bg-[#071B33] px-2.5 py-0.5 text-[10px] font-black text-white uppercase">
-                      Áreas B & C
+                      Áreas A, B & C
                     </span>
                     <h2 className="font-display text-lg sm:text-xl font-bold text-primary">
-                      Imagens Hero das Secções Secundárias (Praça, Importação, Intermediário e Loja)
+                      Imagens Hero das Secções (Serviços ao Domicílio, Praça, Importação, Intermediário e Loja)
                     </h2>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
@@ -4252,7 +4288,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                 kind="ink"
                 disabled={!validPhone || msg.trim().length < 5}
                 onClick={async () => {
-                  await executeAdminSave(
+                  const ok = await executeAdminSave(
                     (st) => ({
                       whatsapp: phone.replace(/\D/g, ""),
                       whatsappDefault: msg.trim(),
@@ -4264,7 +4300,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     "Atualização de Configurações Globais",
                     `WhatsApp: ${phone}, Comissão: ${commissionInput}%`
                   );
-                  setSaved(true);
+                  if (ok) setSaved(true);
                 }}
               >
                 Guardar Configurações
@@ -4467,7 +4503,13 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                 Pesquisa, criação, edição, upload de imagens no Storage, stock e ativação sincronizados com public.products
               </p>
             </div>
-            <Btn kind="action" onClick={() => setShowAddProduct(true)}>
+            <Btn
+              kind="action"
+              onClick={() => {
+                setProductFormError(null);
+                setShowAddProduct(true);
+              }}
+            >
               <Icon name="Plus" className="size-4" />
               Adicionar Produto
             </Btn>
@@ -4977,8 +5019,21 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     </label>
                   </div>
 
+                  {productFormError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                      {productFormError}
+                    </div>
+                  )}
+
                   <div className="flex justify-end gap-2 pt-3 border-t border-border">
-                    <Btn kind="ghost" type="button" onClick={() => setShowAddProduct(false)}>
+                    <Btn
+                      kind="ghost"
+                      type="button"
+                      onClick={() => {
+                        setProductFormError(null);
+                        setShowAddProduct(false);
+                      }}
+                    >
                       Cancelar
                     </Btn>
                     <Btn kind="action" type="submit" disabled={isSaving}>
@@ -5305,8 +5360,21 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     </label>
                   </div>
 
+                  {productFormError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                      {productFormError}
+                    </div>
+                  )}
+
                   <div className="flex justify-end gap-2 pt-3 border-t border-border">
-                    <Btn kind="ghost" type="button" onClick={() => setEditingProduct(null)}>
+                    <Btn
+                      kind="ghost"
+                      type="button"
+                      onClick={() => {
+                        setProductFormError(null);
+                        setEditingProduct(null);
+                      }}
+                    >
                       Cancelar
                     </Btn>
                     <Btn kind="action" type="submit" disabled={isSaving}>
