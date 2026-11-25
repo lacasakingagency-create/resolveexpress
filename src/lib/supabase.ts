@@ -307,50 +307,119 @@ function mapBookingPaymentStatusForDb(status?: string): string {
    Works seamlessly alongside store.ts (with strict persistence error reporting)
    ============================================================================== */
 
+function mapDbProductRowToProduct(row: any): Product {
+  const rawSellerType = String(row.seller_type || "COMPANY").toUpperCase();
+  const isPraca = Boolean(
+    row.is_praca || rawSellerType === "PRACA_SELLER" || rawSellerType === "SELLER"
+  );
+  const sellerType: Product["sellerType"] =
+    rawSellerType === "PARTNER"
+      ? "PARTNER"
+      : rawSellerType === "PRACA_SELLER" || rawSellerType === "SELLER"
+      ? "PRACA_SELLER"
+      : "COMPANY";
+
+  return {
+    id: String(row.id),
+    name: String(row.name || ""),
+    description: String(row.description || ""),
+    priceAOA: Number(row.price_aoa || 0),
+    promotionalPriceAOA:
+      row.promotional_price_aoa !== null && row.promotional_price_aoa !== undefined
+        ? Number(row.promotional_price_aoa)
+        : undefined,
+    available: row.available !== false,
+    stock: Number(row.stock ?? 0),
+    sellerName: String(row.seller_name || "Resolve Express Oficial"),
+    sellerId: String(row.seller_id || "seller-admin"),
+    sellerType,
+    category: String(row.category || "Outros"),
+    image: String(row.image || ""),
+    imageFit: row.image_fit === "contain" ? "contain" : "cover",
+    deliveryLocation: row.delivery_location || "Huambo (Todos os bairros)",
+    estimatedDelivery: row.estimated_delivery || "30 a 60 minutos",
+    warranty: row.warranty || undefined,
+    unit: row.unit || "unidade",
+    rating: Number(row.rating || 5),
+    reviewsCount: Number(row.reviews_count || 1),
+    badge: row.badge || undefined,
+    isPraca,
+    pracaCategoryId: row.praca_category_id || undefined,
+    subcategory: row.subcategory || undefined,
+    brand: row.brand || undefined,
+    sku: row.sku || undefined,
+    condition: row.condition === "USADO" ? "USADO" : "NOVO",
+    images: Array.isArray(row.images) ? row.images : undefined,
+    platformCommissionRate:
+      row.platform_commission_rate !== null && row.platform_commission_rate !== undefined
+        ? Number(row.platform_commission_rate)
+        : undefined,
+    affiliateCommissionRate:
+      row.affiliate_commission_rate !== null && row.affiliate_commission_rate !== undefined
+        ? Number(row.affiliate_commission_rate)
+        : undefined,
+    deliveryOption:
+      row.delivery_option === "DELIVERY" ||
+      row.delivery_option === "PICKUP" ||
+      row.delivery_option === "BOTH"
+        ? row.delivery_option
+        : undefined,
+    status:
+      row.status === "OCULTO" ||
+      row.status === "PENDENTE_APROVACAO" ||
+      row.status === "ARQUIVADO"
+        ? row.status
+        : "ATIVO",
+  };
+}
+
+/**
+ * Fetches products from Supabase with detailed status
+ */
+export async function getSupabaseProductsDetailed(options?: {
+  includeUnavailable?: boolean;
+}): Promise<{ ok: boolean; products: Product[]; error?: string }> {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, products: [], error: "Supabase não está configurado." };
+  }
+  try {
+    let query = supabase
+      .from("products")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (!options?.includeUnavailable) {
+      query = query.eq("available", true);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.warn("Supabase fetch products warning:", error.message);
+      return { ok: false, products: [], error: error.message };
+    }
+
+    return {
+      ok: true,
+      products: (data || []).map(mapDbProductRowToProduct),
+    };
+  } catch (err: any) {
+    console.warn("Failed to reach Supabase products table:", err);
+    return {
+      ok: false,
+      products: [],
+      error: err?.message || "Erro ao consultar public.products.",
+    };
+  }
+}
+
 /**
  * Fetches all active products from Supabase
  */
 export async function getSupabaseProducts(): Promise<Product[] | null> {
-  if (!isSupabaseConfigured()) return null;
-  try {
-    const { data, error } = await supabase
-      .from("products")
-      .select("*")
-      .eq("available", true)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.warn("Supabase fetch products warning:", error.message);
-      return null;
-    }
-
-    if (!data || data.length === 0) return null;
-
-    return data.map((row: any) => ({
-      id: row.id,
-      name: row.name,
-      description: row.description,
-      priceAOA: Number(row.price_aoa),
-      promotionalPriceAOA: row.promotional_price_aoa ? Number(row.promotional_price_aoa) : undefined,
-      available: row.available,
-      stock: row.stock,
-      sellerName: row.seller_name,
-      sellerId: row.seller_id,
-      sellerType: row.seller_type,
-      category: row.category,
-      image: row.image,
-      deliveryLocation: row.delivery_location,
-      estimatedDelivery: row.estimated_delivery,
-      warranty: row.warranty,
-      unit: row.unit,
-      rating: Number(row.rating || 5),
-      reviewsCount: row.reviews_count || 1,
-      badge: row.badge,
-    }));
-  } catch (err) {
-    console.warn("Failed to reach Supabase products table:", err);
-    return null;
-  }
+  const res = await getSupabaseProductsDetailed({ includeUnavailable: false });
+  if (!res.ok || res.products.length === 0) return null;
+  return res.products;
 }
 
 /**
@@ -358,41 +427,184 @@ export async function getSupabaseProducts(): Promise<Product[] | null> {
  */
 export async function saveSupabaseProductStrict(
   prod: Product
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; product?: Product; error?: string }> {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase não está configurado." };
   }
   try {
-    const { error } = await supabase.from("products").upsert({
+    const cleanImage =
+      prod.image && !prod.image.trim().toLowerCase().startsWith("data:")
+        ? prod.image.trim()
+        : "";
+    const now = new Date().toISOString();
+
+    const corePayload = {
       id: prod.id,
-      name: prod.name,
-      description: prod.description,
-      price_aoa: prod.priceAOA,
-      promotional_price_aoa: prod.promotionalPriceAOA || null,
-      stock: prod.stock,
-      available: prod.available,
-      seller_name: prod.sellerName,
-      seller_id: prod.sellerId,
-      seller_type: prod.sellerType,
+      name: prod.name.trim(),
+      description:
+        prod.description?.trim() ||
+        "Produto disponível no catálogo oficial Resolve Express.",
+      price_aoa: Number(prod.priceAOA),
+      promotional_price_aoa:
+        prod.promotionalPriceAOA && Number(prod.promotionalPriceAOA) > 0
+          ? Number(prod.promotionalPriceAOA)
+          : null,
+      stock: Math.max(0, Math.floor(Number(prod.stock || 0))),
+      available: prod.available !== false,
+      seller_name: prod.sellerName?.trim() || "Resolve Express Oficial",
+      seller_id: prod.sellerId?.trim() || "seller-admin",
+      seller_type: prod.sellerType === "PRACA_SELLER" ? "PRACA_SELLER" : prod.sellerType,
       category: prod.category,
-      image: prod.image,
-      delivery_location: prod.deliveryLocation,
-      estimated_delivery: prod.estimatedDelivery,
+      image:
+        cleanImage ||
+        "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600",
+      delivery_location: prod.deliveryLocation || "Huambo (Todos os bairros)",
+      estimated_delivery: prod.estimatedDelivery || "30 a 60 minutos",
       warranty: prod.warranty || null,
-      unit: prod.unit,
+      unit: prod.unit || "unidade",
       rating: prod.rating || 5.0,
       reviews_count: prod.reviewsCount || 1,
       badge: prod.badge || null,
-      updated_at: new Date().toISOString(),
-    });
+      updated_at: now,
+    };
+
+    const extendedPayload = {
+      ...corePayload,
+      image_fit: prod.imageFit || "cover",
+      is_praca: Boolean(prod.isPraca || prod.sellerType === "PRACA_SELLER"),
+      praca_category_id: prod.pracaCategoryId || null,
+      subcategory: prod.subcategory || null,
+      brand: prod.brand || null,
+      sku: prod.sku || null,
+      condition: prod.condition || "NOVO",
+      images: Array.isArray(prod.images) ? prod.images : [],
+      platform_commission_rate:
+        prod.platformCommissionRate !== undefined ? Number(prod.platformCommissionRate) : null,
+      affiliate_commission_rate:
+        prod.affiliateCommissionRate !== undefined ? Number(prod.affiliateCommissionRate) : null,
+      delivery_option: prod.deliveryOption || "BOTH",
+      status: prod.status || (prod.available === false ? "OCULTO" : "ATIVO"),
+    };
+
+    let { data, error } = await supabase
+      .from("products")
+      .upsert(extendedPayload, { onConflict: "id" })
+      .select("*")
+      .maybeSingle();
+
+    // Compatibility fallback if incremental migration columns/constraint aren't applied yet on remote DB
+    const errCode = (error as any)?.code || "";
+    const errMsg = error?.message || "";
+    if (
+      error &&
+      (errCode === "42703" ||
+        errCode === "PGRST204" ||
+        errCode === "23514" ||
+        /column .* does not exist|schema cache|products_seller_type_check/i.test(errMsg))
+    ) {
+      const legacyPayload = {
+        ...corePayload,
+        seller_type:
+          prod.sellerType === "PRACA_SELLER" ? ("SELLER" as const) : prod.sellerType,
+      };
+      const fallbackRes = await supabase
+        .from("products")
+        .upsert(legacyPayload, { onConflict: "id" })
+        .select("*")
+        .maybeSingle();
+      data = fallbackRes.data;
+      error = fallbackRes.error;
+    }
+
     if (error) {
       console.warn("Supabase save product error:", error.message);
       return { ok: false, error: error.message };
     }
-    return { ok: true };
+    return { ok: true, product: data ? mapDbProductRowToProduct(data) : prod };
   } catch (err: any) {
     console.warn("Supabase save product exception:", err);
     return { ok: false, error: err?.message || "Erro ao gravar produto no Supabase." };
+  }
+}
+
+export async function updateSupabaseProductPatch(
+  id: string,
+  patch: Partial<{
+    available: boolean;
+    stock: number;
+    status: Product["status"];
+  }>
+): Promise<{ ok: boolean; notFound?: boolean; product?: Product; error?: string }> {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase não está configurado." };
+  }
+  try {
+    const dbPatch: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
+    if (patch.available !== undefined) dbPatch.available = patch.available;
+    if (patch.stock !== undefined) dbPatch.stock = Math.max(0, Math.floor(Number(patch.stock)));
+    if (patch.status !== undefined) dbPatch.status = patch.status;
+
+    let { data, error } = await supabase
+      .from("products")
+      .update(dbPatch)
+      .eq("id", id)
+      .select("*")
+      .maybeSingle();
+
+    const errCode = (error as any)?.code || "";
+    if (
+      error &&
+      patch.status !== undefined &&
+      (errCode === "42703" || errCode === "PGRST204" || /status/i.test(error.message))
+    ) {
+      const { status: _ignored, ...corePatch } = dbPatch;
+      const retryRes = await supabase
+        .from("products")
+        .update(corePatch)
+        .eq("id", id)
+        .select("*")
+        .maybeSingle();
+      data = retryRes.data;
+      error = retryRes.error;
+    }
+
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    if (!data) {
+      return { ok: false, notFound: true, error: "Produto não encontrado em public.products." };
+    }
+    return { ok: true, product: mapDbProductRowToProduct(data) };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || "Erro ao atualizar produto no Supabase." };
+  }
+}
+
+export async function deleteSupabaseProductStrict(
+  id: string
+): Promise<{ ok: boolean; referencedInOrders?: boolean; error?: string }> {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase não está configurado." };
+  }
+  try {
+    const { error } = await supabase.from("products").delete().eq("id", id);
+    if (error) {
+      const errCode = (error as any)?.code || "";
+      const isFk =
+        errCode === "23503" || /foreign key constraint|violates foreign key/i.test(error.message);
+      return {
+        ok: false,
+        referencedInOrders: isFk,
+        error: isFk
+          ? "Este produto está associado a registos/encomendas na base de dados. Desative o produto em vez de eliminar para preservar o histórico."
+          : error.message,
+      };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || "Erro ao eliminar produto no Supabase." };
   }
 }
 
@@ -854,6 +1066,8 @@ export async function signUpWithSupabase(params: {
   province?: string;
   municipio?: string;
   bairro?: string;
+  address?: string;
+  reference?: string;
 }) {
   const diag = getSupabaseConfigDiagnostics();
   if (!diag.configured) {
@@ -867,13 +1081,15 @@ export async function signUpWithSupabase(params: {
     password: params.pass,
     options: {
       data: {
-        full_name: params.fullName,
-        phone: params.phone || "",
+        full_name: params.fullName.trim(),
+        phone: params.phone?.trim() || "",
         // Security: Public signups can NEVER request administrative roles
         role: "cliente",
         province: params.province || "Huambo",
         municipio: params.municipio || "Huambo",
-        bairro: params.bairro || "",
+        bairro: params.bairro?.trim() || "",
+        address: params.address?.trim() || "",
+        reference: params.reference?.trim() || "",
       },
     },
   });
@@ -1177,9 +1393,68 @@ export async function getSupabaseProfile(userId: string) {
   return res.ok ? res.profile : null;
 }
 
-/**
- * Upsert user profile in public.profiles
- */
+export async function upsertSupabaseProfileDetailed(profile: {
+  id: string;
+  email?: string;
+  full_name: string;
+  phone?: string;
+  role?: string;
+  province?: string;
+  municipio?: string;
+  bairro?: string;
+  address?: string;
+  reference?: string;
+  avatar_url?: string;
+}): Promise<{ ok: boolean; error?: string; errorCode?: string | null }> {
+  if (!isSupabaseConfigured() || !profile.id) {
+    return { ok: false, error: "Supabase não está configurado ou UUID em falta." };
+  }
+  try {
+    const now = new Date().toISOString();
+    const coreProfile: Record<string, any> = {
+      id: profile.id,
+      email: profile.email || null,
+      full_name: profile.full_name,
+      phone: profile.phone || null,
+      role: profile.role || "cliente",
+      province: profile.province || "Huambo",
+      municipio: profile.municipio || "Huambo",
+      bairro: profile.bairro || null,
+      avatar_url: profile.avatar_url || null,
+      updated_at: now,
+    };
+
+    const fullProfile: Record<string, any> = {
+      ...coreProfile,
+      ...(profile.address !== undefined ? { address: profile.address || null } : {}),
+      ...(profile.reference !== undefined ? { reference: profile.reference || null } : {}),
+    };
+
+    let { error } = await supabase.from("profiles").upsert(fullProfile, { onConflict: "id" });
+
+    const errCode = (error as any)?.code ?? null;
+    if (
+      error &&
+      (errCode === "42703" ||
+        errCode === "PGRST204" ||
+        /address|reference|does not exist|schema cache/i.test(error.message))
+    ) {
+      const retry = await supabase.from("profiles").upsert(coreProfile, { onConflict: "id" });
+      error = retry.error;
+    }
+
+    if (error) {
+      const finalCode = (error as any)?.code ?? null;
+      console.warn("Error upserting profile:", { code: finalCode, message: error.message });
+      return { ok: false, error: error.message, errorCode: finalCode };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    console.warn("Exception upserting profile:", err);
+    return { ok: false, error: err?.message || "Exceção ao gravar perfil em public.profiles." };
+  }
+}
+
 export async function upsertSupabaseProfile(profile: {
   id: string;
   email?: string;
@@ -1189,23 +1464,98 @@ export async function upsertSupabaseProfile(profile: {
   province?: string;
   municipio?: string;
   bairro?: string;
+  address?: string;
+  reference?: string;
   avatar_url?: string;
 }) {
-  if (!isSupabaseConfigured() || !profile.id) return false;
-  try {
-    const { error } = await supabase.from("profiles").upsert({
-      ...profile,
-      updated_at: new Date().toISOString(),
-    });
-    if (error) {
-      console.warn("Error upserting profile:", error.message);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.warn("Exception upserting profile:", err);
-    return false;
+  const res = await upsertSupabaseProfileDetailed(profile);
+  return res.ok;
+}
+
+/**
+ * Ensures an authenticated newly signed-up or first-login client user has an authoritative
+ * row in public.profiles linked to auth.uid(). Waits briefly for DB trigger on_auth_user_created,
+ * performs an authenticated client upsert ONLY if genuinely missing (never overwriting admin roles),
+ * and re-verifies with getSupabaseProfileDetailed().
+ */
+export async function ensureClientProfileStrict(
+  authUser: { id: string; email?: string | null; user_metadata?: Record<string, any> },
+  overrideMeta?: {
+    fullName?: string;
+    phone?: string;
+    province?: string;
+    municipio?: string;
+    bairro?: string;
+    address?: string;
+    reference?: string;
   }
+): Promise<SupabaseProfileFetchResult> {
+  // 1. Check immediately + short retry loop for DB trigger commit timing
+  let result = await getSupabaseProfileDetailed(authUser.id);
+  for (const delayMs of [200, 400]) {
+    if ((result.ok && result.profile) || result.diagnostics.finalState === "no_session") {
+      break;
+    }
+    // Stop retrying early on hard RLS/SQL errors
+    if (!result.ok && result.errorCode && result.errorCode !== "PGRST116") {
+      break;
+    }
+    await new Promise((r) => setTimeout(r, delayMs));
+    result = await getSupabaseProfileDetailed(authUser.id);
+  }
+
+  if (result.ok && result.profile) {
+    return result;
+  }
+
+  // Only attempt client-side insert/upsert recovery when there is an active session AND row is genuinely missing
+  if (!result.ok || result.profile !== null) {
+    return result;
+  }
+
+  const normalizedEmail = (authUser.email || "").trim().toLowerCase();
+  const isOfficialAdmin = normalizedEmail === "admin@resolvemcx.ao";
+  const meta = authUser.user_metadata || {};
+
+  const fullName =
+    overrideMeta?.fullName?.trim() ||
+    String(meta.full_name || meta.name || "").trim() ||
+    normalizedEmail.split("@")[0] ||
+    "Cliente Resolve Express";
+
+  const upsertRes = await upsertSupabaseProfileDetailed({
+    id: authUser.id,
+    email: authUser.email || undefined,
+    full_name: fullName,
+    phone: overrideMeta?.phone?.trim() || String(meta.phone || "").trim() || undefined,
+    role: isOfficialAdmin ? "super_admin" : "cliente",
+    province: overrideMeta?.province || String(meta.province || "Huambo"),
+    municipio: overrideMeta?.municipio || String(meta.municipio || "Huambo"),
+    bairro: overrideMeta?.bairro?.trim() || String(meta.bairro || "").trim() || undefined,
+    address: overrideMeta?.address?.trim() || String(meta.address || "").trim() || undefined,
+    reference: overrideMeta?.reference?.trim() || String(meta.reference || "").trim() || undefined,
+  });
+
+  if (!upsertRes.ok) {
+    return {
+      ok: false,
+      profile: null,
+      errorCode: upsertRes.errorCode ?? null,
+      error: `Conta criada no Auth, mas falhou ao registar o perfil em public.profiles: ${
+        upsertRes.error || "Erro desconhecido"
+      }`,
+      diagnostics: {
+        ...result.diagnostics,
+        queryState: "error",
+        errorCode: upsertRes.errorCode ?? null,
+        errorMessage: upsertRes.error || result.diagnostics.errorMessage,
+        finalState: "error",
+      },
+    };
+  }
+
+  // 3. Re-read from public.profiles to confirm real persistence under RLS
+  return await getSupabaseProfileDetailed(authUser.id);
 }
 
 /* ==============================================================================

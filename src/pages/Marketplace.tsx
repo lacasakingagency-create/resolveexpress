@@ -392,11 +392,61 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
     return true;
   };
 
+  const lojaHero = store.sectionHeroes?.loja;
+  const hasLojaHeroImg = Boolean(lojaHero?.active !== false && lojaHero?.image?.trim());
+
   return (
-    <Section
-      eyebrow="Marketplace Resolve Express"
-      title="Compre produtos essenciais com entrega ao domicílio no Huambo."
-    >
+    <div className="min-h-screen bg-slate-50/40">
+      {/* Hero Banner — Loja Oficial de Produtos */}
+      <div className="relative overflow-hidden bg-gradient-to-br from-[#071B33] via-[#0E294B] to-[#12365A] py-10 px-4 text-white sm:py-14 sm:px-6 lg:px-8">
+        {hasLojaHeroImg && (
+          <>
+            <img
+              src={lojaHero!.image.trim()}
+              alt="Loja Oficial Resolve Express"
+              className={`absolute inset-0 h-full w-full pointer-events-none ${
+                lojaHero?.imageFit === "contain" ? "object-contain bg-[#071B33]" : "object-cover"
+              }`}
+            />
+            <div className="absolute inset-0 bg-gradient-to-br from-[#071B33]/85 via-[#0E294B]/75 to-[#12365A]/85 pointer-events-none" />
+          </>
+        )}
+        <div className="absolute -right-20 -top-20 size-72 rounded-full bg-[#E6540F]/15 blur-3xl pointer-events-none" />
+        <div className="relative z-10 mx-auto max-w-7xl flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+          <div className="max-w-2xl">
+            <span className="inline-flex items-center gap-2 rounded-full bg-orange-500/20 px-3.5 py-1 text-xs font-bold uppercase tracking-wider text-orange-300 ring-1 ring-orange-400/30">
+              <Icon name="ShoppingBag" className="size-3.5 text-[#E6540F]" />
+              Loja Oficial Resolve Express
+            </span>
+            <h1 className="mt-3 font-display text-3xl font-black tracking-tight text-white sm:text-4xl lg:text-5xl">
+              Produtos essenciais com <span className="text-[#E6540F]">entrega rápida ao domicílio.</span>
+            </h1>
+            <p className="mt-2 text-sm text-slate-200 sm:text-base leading-relaxed">
+              Água, gás, mercearia, eletrónica e kits essenciais com garantia de entrega no Huambo e em Angola.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setCartDrawerOpen(true)}
+              className="inline-flex items-center gap-2.5 rounded-2xl bg-[#E6540F] px-5 py-3 text-sm font-bold text-white shadow-lg shadow-orange-950/30 transition hover:brightness-110 active:scale-95 cursor-pointer"
+            >
+              <Icon name="ShoppingBasket" className="size-5" />
+              <span>Ver Carrinho</span>
+              {cartCount > 0 && (
+                <span className="grid size-5 place-items-center rounded-full bg-white text-xs font-black text-[#E6540F]">
+                  {cartCount}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <Section
+        eyebrow="Catálogo de Produtos"
+        title="Escolha e receba à sua porta"
+      >
       {/* Top Error Alert */}
       {orderError && (
         <div className="mb-4 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs font-semibold text-destructive flex items-center justify-between gap-2">
@@ -1241,6 +1291,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
         actionType={authModal.type}
         itemName={authModal.itemName}
       />
-    </Section>
+      </Section>
+    </div>
   );
 }

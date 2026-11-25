@@ -94,6 +94,7 @@ export function Auth({
   });
   const [clientRegErrors, setClientRegErrors] = useState<Record<string, string>>({});
   const [regLoading, setRegLoading] = useState(false);
+  const [regConfirmationNotice, setRegConfirmationNotice] = useState<string | null>(null);
 
   const currentProvMunicipalities =
     ANGOLA_PROVINCES.find(
@@ -123,6 +124,7 @@ export function Auth({
     if (!clientReg.accept) err.accept = "Aceite os termos para prosseguir.";
 
     setClientRegErrors(err);
+    setRegConfirmationNotice(null);
     if (Object.keys(err).length === 0) {
       setRegLoading(true);
       if (hasPartialOrInvalidSupabaseConfig) {
@@ -136,7 +138,15 @@ export function Auth({
       }
       if (isConfigured) {
         try {
-          const { error, user } = await signUp({
+          const {
+            error,
+            user,
+            session: signUpSession,
+            requiresEmailConfirmation,
+            profile,
+            profileError: signUpProfileError,
+            profileDiagnostics: signUpDiag,
+          } = await signUp({
             email: clientReg.email.trim(),
             pass: clientReg.password,
             fullName: clientReg.name.trim(),
@@ -146,15 +156,28 @@ export function Auth({
             municipio: clientReg.municipio,
             bairro: clientReg.bairro.trim(),
             address: clientReg.address.trim(),
+            reference: clientReg.reference.trim(),
           });
+          if (signUpDiag) {
+            setLastSignInDiag(signUpDiag);
+          }
           if (error) {
             setClientRegErrors({ email: formatSupabaseAuthError(error) });
             setRegLoading(false);
             return;
           }
-          if (!user) {
+          if (requiresEmailConfirmation || (user && !signUpSession)) {
+            setRegConfirmationNotice(
+              `Conta criada para ${clientReg.email.trim()}. Confirme o link enviado ao seu email para ativar o acesso e depois clique em "Entrar na Conta".`
+            );
+            setRegLoading(false);
+            return;
+          }
+          if (!user || !signUpSession || !profile) {
             setClientRegErrors({
-              email: "Registo efetuado, mas aguarda confirmação de email no Supabase.",
+              email:
+                signUpProfileError ||
+                "Conta criada, mas o perfil em public.profiles não pôde ser confirmado. Tente iniciar sessão novamente.",
             });
             setRegLoading(false);
             return;
@@ -172,7 +195,7 @@ export function Auth({
             ],
           }));
           setRegLoading(false);
-          go("/portal-cliente");
+          go(getDashboardRouteForRole(profile.role) || "/portal-cliente");
           return;
         } catch (supabaseErr: any) {
           setClientRegErrors({
@@ -749,6 +772,26 @@ export function Auth({
               </p>
             </div>
           </div>
+
+          {regConfirmationNotice && (
+            <div className="mb-5 rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-xs sm:text-sm text-emerald-950 flex items-start gap-3">
+              <Icon name="CheckCircle2" className="size-5 shrink-0 text-emerald-600 mt-0.5" />
+              <div className="space-y-2">
+                <p className="font-bold">{regConfirmationNotice}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginIdent(clientReg.email.trim());
+                    setTab("login");
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-800 cursor-pointer"
+                >
+                  <Icon name="LogIn" className="size-3.5" />
+                  Ir para Iniciar Sessão
+                </button>
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handleClientRegister} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">

@@ -28,6 +28,7 @@ export function getBaseSharedState(): Record<string, any> {
     customLogo: "",
     publicDocuments: [],
     heroBanners: DEFAULT_HERO_BANNERS,
+    sectionHeroes: {},
     categoryOverrides: {},
     serviceOverrides: {},
     customServices: [],

@@ -358,6 +358,34 @@ export function subscribeToPlatformSettings(
   };
 }
 
+export function subscribeToProducts(onChange: () => void): () => void {
+  if (!isSupabaseConfigured() || typeof window === "undefined") {
+    return () => {};
+  }
+  const channel = supabase
+    .channel("resolve-express:products")
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "products",
+      },
+      () => {
+        onChange();
+      }
+    )
+    .subscribe();
+
+  return () => {
+    try {
+      supabase.removeChannel(channel);
+    } catch {
+      // Ignore cleanup errors
+    }
+  };
+}
+
 export function getRealtimeHealthStatus(): {
   assetsStatus: RealtimeStatus;
   settingsStatus: RealtimeStatus;

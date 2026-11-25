@@ -21,15 +21,19 @@ import {
   getStoreServices,
   saveAdminStateAsync,
   type PublicDocumentRecord,
+  type SectionHeroKey,
+  type SectionHeroConfig,
 } from "../lib/store";
 import { StatusPill } from "./Other";
 import {
+  deleteSupabaseProductStrict,
   getAuthAccessToken,
   getSupabaseConfigDiagnostics,
   isSupabaseConfigured,
   saveSupabaseProductStrict,
   updateSupabaseBookingStatus,
   updateSupabaseOrderStatus,
+  updateSupabaseProductPatch,
 } from "../lib/supabase";
 import {
   buildAssetReference,
@@ -242,6 +246,9 @@ export function Admin({ initialTab }: { initialTab?: string }) {
 
   // Marketplace filter, add & edit state
   const [productCatFilter, setProductCatFilter] = useState("Todos");
+  const [productSearch, setProductSearch] = useState("");
+  const [productStatusFilter, setProductStatusFilter] = useState<"ALL" | "ATIVO" | "OCULTO">("ALL");
+  const [productOriginFilter, setProductOriginFilter] = useState<"ALL" | "LOJA" | "PRACA">("ALL");
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [newProdName, setNewProdName] = useState("");
@@ -258,6 +265,26 @@ export function Admin({ initialTab }: { initialTab?: string }) {
   const [newProdImgFit, setNewProdImgFit] = useState<"cover" | "contain">("cover");
   const [newProdBadge, setNewProdBadge] = useState("");
   const [newProdFeatured, setNewProdFeatured] = useState(false);
+  const [newProdIsPraca, setNewProdIsPraca] = useState(false);
+  const [newProdPracaCategoryId, setNewProdPracaCategoryId] = useState("");
+  const [newProdCondition, setNewProdCondition] = useState<"NOVO" | "USADO">("NOVO");
+  const [newProdSku, setNewProdSku] = useState("");
+  const [newProdDeliveryLocation, setNewProdDeliveryLocation] = useState("Huambo (Todos os bairros)");
+  const [newProdEstimatedDelivery, setNewProdEstimatedDelivery] = useState("30 a 60 minutos");
+  const [newProdWarranty, setNewProdWarranty] = useState("");
+  const [newProdAvailable, setNewProdAvailable] = useState(true);
+  const [heroFormError, setHeroFormError] = useState<string | null>(null);
+
+  // Section Heroes (Areas B & C) editor modal state
+  const [editingSectionHero, setEditingSectionHero] = useState<{
+    key: SectionHeroKey;
+    label: string;
+    subtitle: string;
+    image: string;
+    imageFit: "cover" | "contain";
+    active: boolean;
+  } | null>(null);
+  const [sectionHeroAssetRef, setSectionHeroAssetRef] = useState<AssetReference | null>(null);
 
   // Hero Banners Management state (Super Admin)
   const currentHeroBanners: HeroBanner[] =
@@ -343,8 +370,9 @@ export function Admin({ initialTab }: { initialTab?: string }) {
   };
 
   const handleSaveHeroBanner = async () => {
+    setHeroFormError(null);
     if (!heroFormImage.trim()) {
-      alert("Por favor, selecione ou envie uma imagem para o banner.");
+      setHeroFormError("Por favor, carregue ou insira o link de uma imagem válida para o banner antes de gravar.");
       return;
     }
 
@@ -422,6 +450,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
 
     if (ok) {
       setHeroFormAssetRef(null);
+      setHeroFormError(null);
       setShowAddHeroBanner(false);
       setEditingHeroBanner(null);
     }
@@ -533,6 +562,120 @@ export function Admin({ initialTab }: { initialTab?: string }) {
         () => ({ heroBanners: DEFAULT_HERO_BANNERS }),
         "Restauro de Banners Padrão da Hero"
       );
+    }
+  };
+
+  // Area B & C Section Heroes Handlers
+  const SECTION_HERO_META: Array<{
+    key: SectionHeroKey;
+    areaBadge: string;
+    label: string;
+    subtitle: string;
+    route: string;
+  }> = [
+    {
+      key: "praca",
+      areaBadge: "Área B · PRAÇA",
+      label: "Hero — PRAÇA Marketplace",
+      subtitle: "Fundo visual da secção principal da Praça ResolveExpress",
+      route: "/praca",
+    },
+    {
+      key: "importacao",
+      areaBadge: "Área C · Importação",
+      label: "Hero — Importação Internacional",
+      subtitle: "Banner principal da página Importação por Encomenda & Cartões",
+      route: "/importacao",
+    },
+    {
+      key: "intermediario",
+      areaBadge: "Área C · Intermediário",
+      label: "Hero — Intermediário de Bens Materiais",
+      subtitle: "Fundo visual do cabeçalho de Intermediação de Bens Materiais",
+      route: "/intermediario",
+    },
+    {
+      key: "loja",
+      areaBadge: "Área C · Loja Oficial",
+      label: "Hero — Loja de Produtos",
+      subtitle: "Cabeçalho visual da Loja Oficial de Produtos Resolve Express",
+      route: "/produtos",
+    },
+  ];
+
+  const handleSaveSectionHero = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSectionHero) return;
+    const prevCfg = store.sectionHeroes?.[editingSectionHero.key];
+    const oldImg = prevCfg?.image;
+    const cleanImg = editingSectionHero.image.trim();
+
+    if (!cleanImg) {
+      setHeroFormError("Carregue uma imagem ou utilize o botão 'Restaurar Padrão' para remover.");
+      return;
+    }
+
+    setHeroFormError(null);
+    const nextCfg: SectionHeroConfig = {
+      image: cleanImg,
+      imageFit: editingSectionHero.imageFit,
+      active: editingSectionHero.active,
+    };
+
+    const ok = await executeAdminSave(
+      (st) => {
+        const nextRefs = { ...(st.assetRefs || {}) };
+        if (sectionHeroAssetRef) {
+          nextRefs[`sectionHero:${editingSectionHero.key}`] = sectionHeroAssetRef;
+        }
+        return {
+          sectionHeroes: {
+            ...(st.sectionHeroes || {}),
+            [editingSectionHero.key]: nextCfg,
+          },
+          assetRefs: nextRefs,
+        };
+      },
+      `Hero ${editingSectionHero.label}`,
+      `Imagem Hero atualizada (${editingSectionHero.key})`
+    );
+
+    if (ok && oldImg && oldImg !== cleanImg) {
+      await safeReplaceImage(oldImg, cleanImg);
+    }
+
+    if (ok) {
+      setSectionHeroAssetRef(null);
+      setEditingSectionHero(null);
+    }
+  };
+
+  const handleRemoveSectionHero = async (key: SectionHeroKey, label: string) => {
+    const prevCfg = store.sectionHeroes?.[key];
+    const oldImg = prevCfg?.image;
+    if (!confirm(`Remover a imagem personalizada de "${label}" e restaurar o fundo padrão?`)) {
+      return;
+    }
+    const ok = await executeAdminSave(
+      (st) => {
+        const nextHeroes = { ...(st.sectionHeroes || {}) };
+        delete nextHeroes[key];
+        const nextRefs = { ...(st.assetRefs || {}) };
+        delete nextRefs[`sectionHero:${key}`];
+        return {
+          sectionHeroes: nextHeroes,
+          assetRefs: nextRefs,
+        };
+      },
+      `Restauro Hero ${label}`,
+      `Imagem removida para ${key}`
+    );
+    if (ok && oldImg) {
+      await safeReplaceImage(oldImg, "");
+    }
+    if (ok && editingSectionHero?.key === key) {
+      setSectionHeroAssetRef(null);
+      setEditingSectionHero(null);
     }
   };
 
@@ -781,37 +924,66 @@ export function Admin({ initialTab }: { initialTab?: string }) {
     }
   };
 
-  // Product handlers
+  // Product handlers (synchronized with public.products + platform_settings)
   const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newProdName.trim() || newProdPrice <= 0) return;
-    const newProd = {
-      id: `PROD-${Date.now()}`,
+    if (!newProdName.trim() || newProdPrice <= 0) {
+      setSaveStatus({
+        message: "Indique um nome válido e um preço superior a 0 AOA.",
+        ok: false,
+      });
+      return;
+    }
+    const pracaCatObj = newProdIsPraca
+      ? (store.pracaCategories || []).find((c) => c.id === newProdPracaCategoryId)
+      : undefined;
+
+    const newProd: Product = {
+      id: newProdIsPraca ? `PRACA-PROD-${Date.now()}` : `PROD-${Date.now()}`,
       name: newProdName.trim(),
-      category: newProdCategory,
+      category: pracaCatObj?.name || newProdCategory,
       priceAOA: Number(newProdPrice),
-      promotionalPriceAOA: newProdPromo ? Number(newProdPromo) : undefined,
-      description: newProdDesc.trim() || "Produto de alta qualidade entregue ao domicílio pela Resolve Express.",
-      sellerName: newProdSeller.trim() || "Resolve Express Oficial",
+      promotionalPriceAOA:
+        newProdPromo && Number(newProdPromo) > 0 ? Number(newProdPromo) : undefined,
+      description:
+        newProdDesc.trim() ||
+        "Produto de alta qualidade entregue ao domicílio pela Resolve Express.",
+      sellerName:
+        newProdSeller.trim() ||
+        (newProdIsPraca ? "Vendedor Oficial Praça" : "Resolve Express Oficial"),
       sellerId: "seller-admin",
-      sellerType: "COMPANY" as const,
-      deliveryLocation: "Huambo (Todos os bairros)",
-      estimatedDelivery: "30 a 60 minutos",
-      stock: Number(newProdStock),
+      sellerType: newProdIsPraca ? "PRACA_SELLER" : "COMPANY",
+      deliveryLocation: newProdDeliveryLocation.trim() || "Huambo (Todos os bairros)",
+      estimatedDelivery: newProdEstimatedDelivery.trim() || "30 a 60 minutos",
+      warranty: newProdWarranty.trim() || undefined,
+      stock: Math.max(0, Math.floor(Number(newProdStock || 0))),
       unit: newProdUnit.trim() || "unidade",
-      image: newProdImg.trim() || "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80",
+      image:
+        newProdImg.trim() ||
+        "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80",
       imageFit: newProdImgFit,
       rating: 5.0,
       reviewsCount: 1,
       badge: newProdBadge.trim() || undefined,
-      available: true,
+      available: newProdAvailable,
+      status: newProdAvailable ? "ATIVO" : "OCULTO",
+      isPraca: newProdIsPraca,
+      pracaCategoryId: newProdIsPraca ? newProdPracaCategoryId || undefined : undefined,
+      condition: newProdCondition,
+      sku: newProdSku.trim() || undefined,
+      platformCommissionRate: newProdIsPraca
+        ? store.pracaSettings?.defaultPlatformCommission ?? 10
+        : undefined,
+      affiliateCommissionRate: newProdIsPraca
+        ? store.pracaSettings?.defaultAffiliateCommission ?? 5
+        : undefined,
     };
 
     if (isSupabaseConfigured()) {
       const sbRes = await saveSupabaseProductStrict(newProd);
       if (!sbRes.ok) {
         setSaveStatus({
-          message: `Falha ao gravar produto no Supabase: ${sbRes.error || "Erro desconhecido"}`,
+          message: `Falha ao gravar produto em public.products: ${sbRes.error || "Erro desconhecido"}`,
           ok: false,
         });
         return;
@@ -824,8 +996,13 @@ export function Admin({ initialTab }: { initialTab?: string }) {
         if (newProdAssetRef) {
           nextRefs[`product:${newProd.id}`] = newProdAssetRef;
         }
+        const featList = st.featuredProducts || [];
         return {
           products: [newProd, ...st.products],
+          featuredProducts:
+            newProdFeatured && !featList.includes(newProd.id)
+              ? [newProd.id, ...featList]
+              : featList,
           assetRefs: nextRefs,
         };
       },
@@ -840,36 +1017,130 @@ export function Admin({ initialTab }: { initialTab?: string }) {
       setNewProdAssetRef(null);
       setNewProdImgFit("cover");
       setNewProdBadge("");
+      setNewProdSku("");
+      setNewProdWarranty("");
+      setNewProdIsPraca(false);
+      setNewProdPracaCategoryId("");
+      setNewProdAvailable(true);
+      setNewProdFeatured(false);
     }
   };
 
   const handleToggleProduct = async (id: string) => {
+    const target = store.products.find((p: Product) => p.id === id);
+    if (!target) return;
+    const nextAvailable = !target.available;
+    const nextStatus: Product["status"] = nextAvailable ? "ATIVO" : "OCULTO";
+
+    if (isSupabaseConfigured()) {
+      const patchRes = await updateSupabaseProductPatch(id, {
+        available: nextAvailable,
+        status: nextStatus,
+      });
+      if (!patchRes.ok) {
+        if (patchRes.notFound) {
+          const upsertRes = await saveSupabaseProductStrict({
+            ...target,
+            available: nextAvailable,
+            status: nextStatus,
+          });
+          if (!upsertRes.ok) {
+            setSaveStatus({
+              message: `Erro ao sincronizar disponibilidade em public.products: ${upsertRes.error}`,
+              ok: false,
+            });
+            return;
+          }
+        } else {
+          setSaveStatus({
+            message: `Erro ao sincronizar disponibilidade em public.products: ${patchRes.error}`,
+            ok: false,
+          });
+          return;
+        }
+      }
+    }
+
     await executeAdminSave(
       (st) => ({
         products: st.products.map((p: Product) =>
-          p.id === id ? { ...p, available: !p.available } : p
+          p.id === id ? { ...p, available: nextAvailable, status: nextStatus } : p
         ),
       }),
       "Alternar Disponibilidade do Produto",
-      `Produto ID: ${id}`
+      `Produto ${target.name} -> ${nextAvailable ? "Ativo" : "Desativado"}`
     );
   };
 
   const handleUpdateStock = async (id: string, delta: number) => {
+    const target = store.products.find((p: Product) => p.id === id);
+    if (!target) return;
+    const nextStock = Math.max(0, Number(target.stock || 0) + delta);
+
+    if (isSupabaseConfigured()) {
+      const patchRes = await updateSupabaseProductPatch(id, { stock: nextStock });
+      if (!patchRes.ok) {
+        if (patchRes.notFound) {
+          const upsertRes = await saveSupabaseProductStrict({
+            ...target,
+            stock: nextStock,
+          });
+          if (!upsertRes.ok) {
+            setSaveStatus({
+              message: `Erro ao atualizar stock em public.products: ${upsertRes.error}`,
+              ok: false,
+            });
+            return;
+          }
+        } else {
+          setSaveStatus({
+            message: `Erro ao atualizar stock em public.products: ${patchRes.error}`,
+            ok: false,
+          });
+          return;
+        }
+      }
+    }
+
     await executeAdminSave(
       (st) => ({
         products: st.products.map((p: Product) =>
-          p.id === id ? { ...p, stock: Math.max(0, p.stock + delta) } : p
+          p.id === id ? { ...p, stock: nextStock } : p
         ),
       }),
       "Atualização de Estoque de Produto",
-      `Produto ID: ${id}, alteração: ${delta}`
+      `Produto ${target.name}: stock ${nextStock}`
     );
   };
 
   const handleDeleteProduct = async (id: string, name?: string) => {
     const targetProd = store.products.find((p: Product) => p.id === id);
-    if (!confirm(`Tem a certeza que deseja eliminar o produto "${name || id}"?`)) return;
+    const hasOrders = (store.productOrders || []).some((ord: any) =>
+      ord.items?.some((it: any) => it.product?.id === id)
+    );
+    if (hasOrders) {
+      setSaveStatus({
+        message: `O produto "${name || id}" possui encomendas associadas. Desative-o em vez de eliminar para preservar o histórico de encomendas.`,
+        ok: false,
+      });
+      return;
+    }
+
+    if (!confirm(`Tem a certeza que deseja eliminar definitivamente o produto "${name || id}"?`)) {
+      return;
+    }
+
+    if (isSupabaseConfigured()) {
+      const delRes = await deleteSupabaseProductStrict(id);
+      if (!delRes.ok) {
+        setSaveStatus({
+          message: `Falha ao eliminar em public.products: ${delRes.error || "Erro desconhecido"}`,
+          ok: false,
+        });
+        return;
+      }
+    }
+
     const ok = await executeAdminSave(
       (st) => {
         const nextRefs = { ...(st.assetRefs || {}) };
@@ -877,6 +1148,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
         return {
           products: st.products.filter((p: Product) => p.id !== id),
           featuredProducts: (st.featuredProducts || []).filter((pid: string) => pid !== id),
+          featuredHomeProducts: (st.featuredHomeProducts || []).filter((pid: string) => pid !== id),
           assetRefs: nextRefs,
         };
       },
@@ -1989,6 +2261,217 @@ export function Admin({ initialTab }: { initialTab?: string }) {
               );
             })}
           </div>
+
+          {/* ÁREAS B & C — GESTÃO DE HERO IMAGES DAS SECÇÕES PRINCIPAIS */}
+          <div className="pt-4 border-t border-border space-y-4">
+            <div className="rounded-[var(--radius)] border border-border bg-paper p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-[#071B33] px-2.5 py-0.5 text-[10px] font-black text-white uppercase">
+                      Áreas B & C
+                    </span>
+                    <h2 className="font-display text-lg sm:text-xl font-bold text-primary">
+                      Imagens Hero das Secções Secundárias (Praça, Importação, Intermediário e Loja)
+                    </h2>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Faça upload direto para o bucket <span className="font-mono font-semibold">public-assets</span> com registo em <span className="font-mono font-semibold">platform_assets</span>, substituição segura e atualização em tempo real em todos os dispositivos.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {SECTION_HERO_META.map((sec) => {
+                const cfg = store.sectionHeroes?.[sec.key];
+                const hasImg = Boolean(cfg?.image?.trim()) && cfg?.active !== false;
+                return (
+                  <div
+                    key={sec.key}
+                    className="overflow-hidden rounded-2xl border border-border bg-paper shadow-xs flex flex-col justify-between"
+                  >
+                    <div className="relative h-44 bg-gradient-to-br from-[#071B33] via-[#0E294B] to-[#12365A] overflow-hidden flex items-end p-4 text-white">
+                      {cfg?.image?.trim() && (
+                        <img
+                          src={cfg.image}
+                          alt={sec.label}
+                          className={`absolute inset-0 size-full ${
+                            cfg.imageFit === "contain"
+                              ? "object-contain p-2"
+                              : "object-cover object-center"
+                          } ${cfg.active === false ? "opacity-35 grayscale" : "opacity-85"}`}
+                        />
+                      )}
+                      <div className="absolute inset-0 bg-gradient-to-t from-[#071B33]/90 via-[#071B33]/45 to-transparent pointer-events-none" />
+                      <div className="relative z-10 w-full flex items-end justify-between gap-2">
+                        <div>
+                          <span className="inline-block rounded-full bg-[#E6540F] px-2.5 py-0.5 text-[10px] font-black uppercase text-white">
+                            {sec.areaBadge}
+                          </span>
+                          <h3 className="mt-1 font-display text-base font-black text-white">
+                            {sec.label}
+                          </h3>
+                          <p className="text-[11px] text-slate-200 line-clamp-1">{sec.subtitle}</p>
+                        </div>
+                        <span
+                          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            hasImg
+                              ? "bg-emerald-500/90 text-white"
+                              : cfg?.image
+                              ? "bg-amber-500/90 text-white"
+                              : "bg-white/20 text-white"
+                          }`}
+                        >
+                          {hasImg ? "Imagem Ativa" : cfg?.image ? "Oculta" : "Fundo Padrão"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-4 flex flex-wrap items-center justify-between gap-2 border-t border-border">
+                      <span className="text-[11px] font-mono text-muted-foreground">
+                        Rota: {sec.route}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {cfg?.image && (
+                          <Btn
+                            kind="ghost"
+                            className="text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+                            onClick={() => handleRemoveSectionHero(sec.key, sec.label)}
+                          >
+                            <Icon name="RotateCcw" className="size-3.5" />
+                            Restaurar Padrão
+                          </Btn>
+                        )}
+                        <Btn
+                          kind="action"
+                          className="text-xs"
+                          onClick={() => {
+                            setHeroFormError(null);
+                            setSectionHeroAssetRef(null);
+                            setEditingSectionHero({
+                              key: sec.key,
+                              label: sec.label,
+                              subtitle: sec.subtitle,
+                              image: cfg?.image || "",
+                              imageFit: cfg?.imageFit || "cover",
+                              active: cfg?.active !== false,
+                            });
+                          }}
+                        >
+                          <Icon name="Image" className="size-3.5" />
+                          {cfg?.image ? "Substituir Imagem" : "Carregar Imagem"}
+                        </Btn>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Modal de Edição de Hero das Secções B & C */}
+          {editingSectionHero && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+              <div className="w-full max-w-xl rounded-2xl border border-border bg-paper p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between border-b border-border pb-3 mb-4">
+                  <div>
+                    <h3 className="font-display text-lg font-bold text-primary">
+                      {editingSectionHero.label}
+                    </h3>
+                    <p className="text-xs text-muted-foreground">{editingSectionHero.subtitle}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHeroFormError(null);
+                      setSectionHeroAssetRef(null);
+                      setEditingSectionHero(null);
+                    }}
+                    className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-mist cursor-pointer"
+                  >
+                    <Icon name="X" className="size-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveSectionHero} className="space-y-4">
+                  <ImageUploader
+                    value={editingSectionHero.image}
+                    onChange={(img) =>
+                      setEditingSectionHero((prev) => (prev ? { ...prev, image: img } : null))
+                    }
+                    fitMode={editingSectionHero.imageFit}
+                    onFitModeChange={(fit) =>
+                      setEditingSectionHero((prev) => (prev ? { ...prev, imageFit: fit } : null))
+                    }
+                    assetCategory="banners"
+                    assetTitle={editingSectionHero.label}
+                    onAssetUploaded={(asset) =>
+                      setSectionHeroAssetRef(buildAssetReference(asset, asset.public_url || undefined))
+                    }
+                    label="Imagem de Fundo do Hero"
+                    helperText="A imagem é gravada em public-assets, registada em platform_assets e aplicada com sobreposição escura para legibilidade."
+                    aspectRatio="video"
+                  />
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editingSectionHero.active}
+                      onChange={(e) =>
+                        setEditingSectionHero({
+                          ...editingSectionHero,
+                          active: e.target.checked,
+                        })
+                      }
+                      className="size-4 accent-action"
+                    />
+                    <span className="text-xs font-semibold text-primary">
+                      Exibir esta imagem Hero publicamente na secção
+                    </span>
+                  </label>
+
+                  {heroFormError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                      {heroFormError}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-2 pt-3 border-t border-border">
+                    {store.sectionHeroes?.[editingSectionHero.key]?.image ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleRemoveSectionHero(editingSectionHero.key, editingSectionHero.label)
+                        }
+                        className="text-xs font-bold text-red-600 hover:underline cursor-pointer"
+                      >
+                        Remover e Restaurar Padrão
+                      </button>
+                    ) : (
+                      <span />
+                    )}
+                    <div className="flex items-center gap-2">
+                      <Btn
+                        kind="ghost"
+                        type="button"
+                        onClick={() => {
+                          setHeroFormError(null);
+                          setSectionHeroAssetRef(null);
+                          setEditingSectionHero(null);
+                        }}
+                      >
+                        Cancelar
+                      </Btn>
+                      <Btn kind="action" type="submit" disabled={isSaving}>
+                        {isSaving ? "A guardar..." : "Guardar Hero no Supabase"}
+                      </Btn>
+                    </div>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -3978,16 +4461,66 @@ export function Admin({ initialTab }: { initialTab?: string }) {
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h2 className="font-display text-xl font-black text-primary">
-                Gestão do Catálogo de Produtos
+                Gestão Completa do Catálogo de Produtos (Loja & Praça)
               </h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Controlo de artigos, stock, preços promocionais e vendedores autorizados
+                Pesquisa, criação, edição, upload de imagens no Storage, stock e ativação sincronizados com public.products
               </p>
             </div>
             <Btn kind="action" onClick={() => setShowAddProduct(true)}>
               <Icon name="Plus" className="size-4" />
               Adicionar Produto
             </Btn>
+          </div>
+
+          {/* Search, Origin & Status Filters */}
+          <div className="grid grid-cols-1 gap-3 rounded-2xl border border-border bg-paper p-4 sm:grid-cols-12">
+            <div className="sm:col-span-5 relative">
+              <Icon name="Search" className="absolute left-3 top-3 size-4 text-muted-foreground" />
+              <input
+                type="text"
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+                placeholder="Pesquisar produto, vendedor, SKU ou descrição..."
+                className={inputCls + " pl-9"}
+              />
+            </div>
+            <div className="sm:col-span-3 flex gap-1">
+              {(["ALL", "LOJA", "PRACA"] as const).map((orig) => (
+                <button
+                  key={orig}
+                  type="button"
+                  onClick={() => setProductOriginFilter(orig)}
+                  className={`flex-1 rounded-xl px-2 py-2 text-xs font-bold transition cursor-pointer ${
+                    productOriginFilter === orig
+                      ? "bg-[#E6540F] text-white"
+                      : "bg-mist text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {orig === "ALL" ? "Todos" : orig === "LOJA" ? "Loja Oficial" : "PRAÇA"}
+                </button>
+              ))}
+            </div>
+            <div className="sm:col-span-4 flex gap-1">
+              {(["ALL", "ATIVO", "OCULTO"] as const).map((stFilter) => (
+                <button
+                  key={stFilter}
+                  type="button"
+                  onClick={() => setProductStatusFilter(stFilter)}
+                  className={`flex-1 rounded-xl px-2 py-2 text-xs font-bold transition cursor-pointer ${
+                    productStatusFilter === stFilter
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-mist text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {stFilter === "ALL"
+                    ? "Todos Estados"
+                    : stFilter === "ATIVO"
+                    ? "Ativos"
+                    : "Desativados"}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Category Filter */}
@@ -4001,7 +4534,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                   : "bg-mist text-muted-foreground hover:text-foreground"
               }`}
             >
-              Todos ({store.products.length})
+              Todas Categorias ({store.products.length})
             </button>
             {PRODUCT_CATEGORIES.filter((c) => c !== "Todos").map((catName) => {
               const count = store.products.filter((p) => p.category === catName).length;
@@ -4025,14 +4558,32 @@ export function Admin({ initialTab }: { initialTab?: string }) {
           {/* Products Table/Grid */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {store.products
-              .filter(
-                (p) => productCatFilter === "Todos" || p.category === productCatFilter
-              )
+              .filter((p) => {
+                const matchCat =
+                  productCatFilter === "Todos" || p.category === productCatFilter;
+                const isPracaItem = Boolean(p.isPraca || p.sellerType === "PRACA_SELLER");
+                const matchOrigin =
+                  productOriginFilter === "ALL" ||
+                  (productOriginFilter === "PRACA" ? isPracaItem : !isPracaItem);
+                const matchStatus =
+                  productStatusFilter === "ALL" ||
+                  (productStatusFilter === "ATIVO"
+                    ? p.available !== false
+                    : p.available === false);
+                const q = productSearch.trim().toLowerCase();
+                const matchQuery =
+                  !q ||
+                  p.name.toLowerCase().includes(q) ||
+                  (p.description || "").toLowerCase().includes(q) ||
+                  (p.sellerName || "").toLowerCase().includes(q) ||
+                  (p.sku || p.id).toLowerCase().includes(q);
+                return matchCat && matchOrigin && matchStatus && matchQuery;
+              })
               .map((prod) => (
                 <div
                   key={prod.id}
                   className={`rounded-[var(--radius)] border bg-paper p-4 transition shadow-xs ${
-                    prod.available ? "border-border" : "border-red-200 opacity-60"
+                    prod.available ? "border-border" : "border-red-200 opacity-65"
                   }`}
                 >
                   <div className={`relative mb-3 aspect-video w-full overflow-hidden rounded-[var(--radius)] ${
@@ -4047,11 +4598,29 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                         prod.imageFit === "contain" ? "object-contain" : "object-cover object-center"
                       }`}
                     />
-                    {prod.badge && (
-                      <span className="absolute top-2 left-2 rounded-full bg-action px-2 py-0.5 text-[10px] font-black text-action-ink">
-                        {prod.badge}
+                    <div className="absolute top-2 left-2 flex flex-wrap gap-1">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-black ${
+                          prod.isPraca || prod.sellerType === "PRACA_SELLER"
+                            ? "bg-[#071B33] text-white"
+                            : "bg-emerald-700 text-white"
+                        }`}
+                      >
+                        {prod.isPraca || prod.sellerType === "PRACA_SELLER"
+                          ? "PRAÇA"
+                          : "LOJA"}
                       </span>
-                    )}
+                      {prod.badge && (
+                        <span className="rounded-full bg-action px-2 py-0.5 text-[10px] font-black text-action-ink">
+                          {prod.badge}
+                        </span>
+                      )}
+                      {!prod.available && (
+                        <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-black text-white">
+                          Desativado
+                        </span>
+                      )}
+                    </div>
                     <span
                       className={`absolute top-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-black ${
                         prod.stock > 0 ? "bg-ok text-white" : "bg-red-600 text-white"
@@ -4062,9 +4631,16 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                   </div>
 
                   <div className="space-y-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-action">
-                      {prod.category}
-                    </span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-action">
+                        {prod.category}
+                      </span>
+                      {prod.sku && (
+                        <span className="text-[10px] font-mono text-muted-foreground">
+                          {prod.sku}
+                        </span>
+                      )}
+                    </div>
                     <h3 className="font-display text-sm font-bold text-primary line-clamp-1">
                       {prod.name}
                     </h3>
@@ -4093,24 +4669,27 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     <div className="flex items-center gap-1">
                       <button
                         type="button"
+                        disabled={isSaving || prod.stock <= 0}
                         onClick={() => handleUpdateStock(prod.id, -1)}
-                        className="rounded border border-border px-1.5 py-0.5 font-bold hover:bg-mist"
+                        className="rounded border border-border px-1.5 py-0.5 font-bold hover:bg-mist disabled:opacity-40 cursor-pointer"
                         title="Diminuir stock"
                       >
                         -1
                       </button>
                       <button
                         type="button"
+                        disabled={isSaving}
                         onClick={() => handleUpdateStock(prod.id, 5)}
-                        className="rounded border border-border px-1.5 py-0.5 font-bold hover:bg-mist"
+                        className="rounded border border-border px-1.5 py-0.5 font-bold hover:bg-mist disabled:opacity-40 cursor-pointer"
                         title="Aumentar stock em 5"
                       >
                         +5
                       </button>
                       <button
                         type="button"
+                        disabled={isSaving}
                         onClick={() => handleToggleFeaturedProduct(prod.id)}
-                        className={`rounded px-1.5 py-0.5 text-[11px] font-bold transition flex items-center gap-0.5 ${
+                        className={`rounded px-1.5 py-0.5 text-[11px] font-bold transition flex items-center gap-0.5 cursor-pointer ${
                           (store.featuredProducts || []).includes(prod.id)
                             ? "bg-amber-100 text-amber-800 border border-amber-300"
                             : "border border-border text-muted-foreground hover:text-amber-600"
@@ -4132,8 +4711,9 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     <div className="flex items-center gap-1.5">
                       <button
                         type="button"
+                        disabled={isSaving}
                         onClick={() => handleOpenEditProduct(prod)}
-                        className="rounded border border-border px-2 py-0.5 text-xs font-bold hover:bg-mist transition flex items-center gap-1"
+                        className="rounded border border-border px-2 py-0.5 text-xs font-bold hover:bg-mist transition flex items-center gap-1 cursor-pointer"
                         title="Editar produto"
                       >
                         <Icon name="Pencil" className="size-3" />
@@ -4141,8 +4721,9 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                       </button>
                       <button
                         type="button"
+                        disabled={isSaving}
                         onClick={() => handleToggleProduct(prod.id)}
-                        className={`rounded px-2 py-0.5 text-xs font-bold transition ${
+                        className={`rounded px-2 py-0.5 text-xs font-bold transition cursor-pointer ${
                           prod.available
                             ? "bg-mist text-foreground hover:bg-mist/80"
                             : "bg-ok text-white"
@@ -4152,8 +4733,9 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                       </button>
                       <button
                         type="button"
+                        disabled={isSaving}
                         onClick={() => handleDeleteProduct(prod.id, prod.name)}
-                        className="text-red-500 hover:text-red-700 p-1"
+                        className="text-red-500 hover:text-red-700 p-1 cursor-pointer"
                         title="Eliminar produto"
                       >
                         <Icon name="Trash2" className="size-3.5" />
@@ -4167,10 +4749,10 @@ export function Admin({ initialTab }: { initialTab?: string }) {
           {/* Add Product Modal */}
           {showAddProduct && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
-              <div className="w-full max-w-lg rounded-[var(--radius)] border border-border bg-paper p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+              <div className="w-full max-w-xl rounded-[var(--radius)] border border-border bg-paper p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
                 <div className="flex items-center justify-between border-b border-border pb-3">
                   <h3 className="font-display text-lg font-black text-primary">
-                    Adicionar Novo Produto ao Marketplace
+                    Adicionar Novo Produto ao Catálogo
                   </h3>
                   <button
                     type="button"
@@ -4182,7 +4764,30 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                 </div>
 
                 <form onSubmit={handleCreateProduct} className="space-y-3 pt-3">
-                  <Field label="Nome do Produto">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <Field label="Destino / Canal">
+                      <select
+                        value={newProdIsPraca ? "PRACA" : "LOJA"}
+                        onChange={(e) => setNewProdIsPraca(e.target.value === "PRACA")}
+                        className={inputCls}
+                      >
+                        <option value="LOJA">Loja Oficial Resolve Express</option>
+                        <option value="PRACA">PRAÇA Marketplace</option>
+                      </select>
+                    </Field>
+                    <Field label="Condição">
+                      <select
+                        value={newProdCondition}
+                        onChange={(e) => setNewProdCondition(e.target.value as "NOVO" | "USADO")}
+                        className={inputCls}
+                      >
+                        <option value="NOVO">Novo</option>
+                        <option value="USADO">Usado</option>
+                      </select>
+                    </Field>
+                  </div>
+
+                  <Field label="Nome do Produto *">
                     <input
                       type="text"
                       required
@@ -4194,19 +4799,36 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                   </Field>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <Field label="Categoria">
-                      <select
-                        value={newProdCategory}
-                        onChange={(e) => setNewProdCategory(e.target.value)}
-                        className={inputCls}
-                      >
-                        {PRODUCT_CATEGORIES.filter((c) => c !== "Todos").map((cName) => (
-                          <option key={cName} value={cName}>
-                            {cName}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
+                    {newProdIsPraca ? (
+                      <Field label="Categoria da Praça">
+                        <select
+                          value={newProdPracaCategoryId}
+                          onChange={(e) => setNewProdPracaCategoryId(e.target.value)}
+                          className={inputCls}
+                        >
+                          <option value="">Selecionar categoria da Praça</option>
+                          {(store.pracaCategories || []).map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    ) : (
+                      <Field label="Categoria da Loja">
+                        <select
+                          value={newProdCategory}
+                          onChange={(e) => setNewProdCategory(e.target.value)}
+                          className={inputCls}
+                        >
+                          {PRODUCT_CATEGORIES.filter((c) => c !== "Todos").map((cName) => (
+                            <option key={cName} value={cName}>
+                              {cName}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    )}
                     <Field label="Unidade">
                       <input
                         type="text"
@@ -4219,10 +4841,11 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                   </div>
 
                   <div className="grid grid-cols-3 gap-3">
-                    <Field label="Preço (AOA)">
+                    <Field label="Preço (AOA) *">
                       <input
                         type="number"
                         required
+                        min={1}
                         value={newProdPrice}
                         onChange={(e) => setNewProdPrice(Number(e.target.value))}
                         className={inputCls}
@@ -4231,6 +4854,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     <Field label="Preço Promo (AOA)">
                       <input
                         type="number"
+                        min={0}
                         value={newProdPromo || ""}
                         onChange={(e) =>
                           setNewProdPromo(e.target.value ? Number(e.target.value) : undefined)
@@ -4239,9 +4863,10 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                         className={inputCls}
                       />
                     </Field>
-                    <Field label="Stock Inicial">
+                    <Field label="Stock Inicial *">
                       <input
                         type="number"
+                        min={0}
                         value={newProdStock}
                         onChange={(e) => setNewProdStock(Number(e.target.value))}
                         className={inputCls}
@@ -4249,7 +4874,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     </Field>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
                     <Field label="Vendedor / Loja">
                       <input
                         type="text"
@@ -4259,12 +4884,49 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                         className={inputCls}
                       />
                     </Field>
+                    <Field label="SKU / Código">
+                      <input
+                        type="text"
+                        value={newProdSku}
+                        onChange={(e) => setNewProdSku(e.target.value)}
+                        placeholder="Ex.: REX-001"
+                        className={inputCls}
+                      />
+                    </Field>
                     <Field label="Etiqueta / Badge">
                       <input
                         type="text"
                         value={newProdBadge}
                         onChange={(e) => setNewProdBadge(e.target.value)}
-                        placeholder="Ex.: Novo, Destaque, Oferta"
+                        placeholder="Ex.: Novo, Oferta"
+                        className={inputCls}
+                      />
+                    </Field>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <Field label="Entrega (Local)">
+                      <input
+                        type="text"
+                        value={newProdDeliveryLocation}
+                        onChange={(e) => setNewProdDeliveryLocation(e.target.value)}
+                        className={inputCls}
+                      />
+                    </Field>
+                    <Field label="Prazo Estimado">
+                      <input
+                        type="text"
+                        value={newProdEstimatedDelivery}
+                        onChange={(e) => setNewProdEstimatedDelivery(e.target.value)}
+                        className={inputCls}
+                      />
+                    </Field>
+                    <Field label="Garantia">
+                      <input
+                        type="text"
+                        value={newProdWarranty}
+                        onChange={(e) => setNewProdWarranty(e.target.value)}
+                        placeholder="Ex.: 6 meses"
                         className={inputCls}
                       />
                     </Field>
@@ -4294,12 +4956,33 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     />
                   </Field>
 
+                  <div className="flex flex-wrap gap-4 pt-1">
+                    <label className="flex items-center gap-2 text-xs font-bold text-primary cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={newProdAvailable}
+                        onChange={(e) => setNewProdAvailable(e.target.checked)}
+                        className="size-4 accent-action"
+                      />
+                      Produto ativo e visível para venda
+                    </label>
+                    <label className="flex items-center gap-2 text-xs font-bold text-primary cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={newProdFeatured}
+                        onChange={(e) => setNewProdFeatured(e.target.checked)}
+                        className="size-4 accent-action"
+                      />
+                      Destacar na página inicial
+                    </label>
+                  </div>
+
                   <div className="flex justify-end gap-2 pt-3 border-t border-border">
                     <Btn kind="ghost" type="button" onClick={() => setShowAddProduct(false)}>
                       Cancelar
                     </Btn>
-                    <Btn kind="action" type="submit">
-                      Publicar Produto
+                    <Btn kind="action" type="submit" disabled={isSaving}>
+                      {isSaving ? "A guardar..." : "Publicar Produto"}
                     </Btn>
                   </div>
                 </form>
@@ -4310,7 +4993,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
           {/* Edit Product Modal */}
           {editingProduct && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
-              <div className="w-full max-w-lg rounded-[var(--radius)] border border-border bg-paper p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+              <div className="w-full max-w-xl rounded-[var(--radius)] border border-border bg-paper p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
                 <div className="flex items-center justify-between border-b border-border pb-3">
                   <h3 className="font-display text-lg font-black text-primary">
                     Editar Produto: {editingProduct.name}
@@ -4325,6 +5008,45 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                 </div>
 
                 <form onSubmit={handleSaveEditProduct} className="space-y-3 pt-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <Field label="Canal / Origem">
+                      <select
+                        value={
+                          editingProduct.isPraca || editingProduct.sellerType === "PRACA_SELLER"
+                            ? "PRACA"
+                            : "LOJA"
+                        }
+                        onChange={(e) => {
+                          const isP = e.target.value === "PRACA";
+                          setEditingProduct({
+                            ...editingProduct,
+                            isPraca: isP,
+                            sellerType: isP ? "PRACA_SELLER" : "COMPANY",
+                          });
+                        }}
+                        className={inputCls}
+                      >
+                        <option value="LOJA">Loja Oficial Resolve Express</option>
+                        <option value="PRACA">PRAÇA Marketplace</option>
+                      </select>
+                    </Field>
+                    <Field label="Condição">
+                      <select
+                        value={editingProduct.condition || "NOVO"}
+                        onChange={(e) =>
+                          setEditingProduct({
+                            ...editingProduct,
+                            condition: e.target.value as "NOVO" | "USADO",
+                          })
+                        }
+                        className={inputCls}
+                      >
+                        <option value="NOVO">Novo</option>
+                        <option value="USADO">Usado</option>
+                      </select>
+                    </Field>
+                  </div>
+
                   <Field label="Nome do Produto">
                     <input
                       type="text"
@@ -4338,21 +5060,47 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                   </Field>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <Field label="Categoria">
-                      <select
-                        value={editingProduct.category}
-                        onChange={(e) =>
-                          setEditingProduct({ ...editingProduct, category: e.target.value })
-                        }
-                        className={inputCls}
-                      >
-                        {PRODUCT_CATEGORIES.filter((c) => c !== "Todos").map((c) => (
-                          <option key={c} value={c}>
-                            {c}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
+                    {editingProduct.isPraca || editingProduct.sellerType === "PRACA_SELLER" ? (
+                      <Field label="Categoria da Praça">
+                        <select
+                          value={editingProduct.pracaCategoryId || ""}
+                          onChange={(e) => {
+                            const catObj = (store.pracaCategories || []).find(
+                              (c) => c.id === e.target.value
+                            );
+                            setEditingProduct({
+                              ...editingProduct,
+                              pracaCategoryId: e.target.value || undefined,
+                              category: catObj?.name || editingProduct.category,
+                            });
+                          }}
+                          className={inputCls}
+                        >
+                          <option value="">{editingProduct.category || "Outra Categoria"}</option>
+                          {(store.pracaCategories || []).map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    ) : (
+                      <Field label="Categoria">
+                        <select
+                          value={editingProduct.category}
+                          onChange={(e) =>
+                            setEditingProduct({ ...editingProduct, category: e.target.value })
+                          }
+                          className={inputCls}
+                        >
+                          {PRODUCT_CATEGORIES.filter((c) => c !== "Todos").map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    )}
                     <Field label="Unidade">
                       <input
                         type="text"
@@ -4400,6 +5148,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     <Field label="Stock Atual">
                       <input
                         type="number"
+                        min={0}
                         value={editingProduct.stock}
                         onChange={(e) =>
                           setEditingProduct({
@@ -4412,7 +5161,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     </Field>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
                     <Field label="Vendedor / Loja">
                       <input
                         type="text"
@@ -4421,6 +5170,19 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                           setEditingProduct({
                             ...editingProduct,
                             sellerName: e.target.value,
+                          })
+                        }
+                        className={inputCls}
+                      />
+                    </Field>
+                    <Field label="SKU / Referência">
+                      <input
+                        type="text"
+                        value={editingProduct.sku || ""}
+                        onChange={(e) =>
+                          setEditingProduct({
+                            ...editingProduct,
+                            sku: e.target.value || undefined,
                           })
                         }
                         className={inputCls}
@@ -4437,6 +5199,48 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                           })
                         }
                         placeholder="Ex.: Mais Vendido"
+                        className={inputCls}
+                      />
+                    </Field>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <Field label="Local Entrega">
+                      <input
+                        type="text"
+                        value={editingProduct.deliveryLocation || ""}
+                        onChange={(e) =>
+                          setEditingProduct({
+                            ...editingProduct,
+                            deliveryLocation: e.target.value,
+                          })
+                        }
+                        className={inputCls}
+                      />
+                    </Field>
+                    <Field label="Prazo Estimado">
+                      <input
+                        type="text"
+                        value={editingProduct.estimatedDelivery || ""}
+                        onChange={(e) =>
+                          setEditingProduct({
+                            ...editingProduct,
+                            estimatedDelivery: e.target.value,
+                          })
+                        }
+                        className={inputCls}
+                      />
+                    </Field>
+                    <Field label="Garantia">
+                      <input
+                        type="text"
+                        value={editingProduct.warranty || ""}
+                        onChange={(e) =>
+                          setEditingProduct({
+                            ...editingProduct,
+                            warranty: e.target.value || undefined,
+                          })
+                        }
                         className={inputCls}
                       />
                     </Field>
@@ -4474,16 +5278,30 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     />
                   </Field>
 
-                  <div className="flex items-center gap-2 pt-2">
-                    <input
-                      type="checkbox"
-                      id="editProdFeat"
-                      checked={(store.featuredProducts || []).includes(editingProduct.id)}
-                      onChange={() => handleToggleFeaturedProduct(editingProduct.id)}
-                      className="size-4 accent-action"
-                    />
-                    <label htmlFor="editProdFeat" className="text-xs font-bold text-primary cursor-pointer">
-                      ⭐ Destacar este produto na página inicial e topo da loja
+                  <div className="flex flex-wrap gap-4 pt-2">
+                    <label className="flex items-center gap-2 text-xs font-bold text-primary cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editingProduct.available !== false}
+                        onChange={(e) =>
+                          setEditingProduct({
+                            ...editingProduct,
+                            available: e.target.checked,
+                            status: e.target.checked ? "ATIVO" : "OCULTO",
+                          })
+                        }
+                        className="size-4 accent-action"
+                      />
+                      Produto ativo e visível para compra
+                    </label>
+                    <label className="flex items-center gap-2 text-xs font-bold text-primary cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={(store.featuredProducts || []).includes(editingProduct.id)}
+                        onChange={() => handleToggleFeaturedProduct(editingProduct.id)}
+                        className="size-4 accent-action"
+                      />
+                      Destacar na página inicial e topo da loja
                     </label>
                   </div>
 
@@ -4491,8 +5309,8 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     <Btn kind="ghost" type="button" onClick={() => setEditingProduct(null)}>
                       Cancelar
                     </Btn>
-                    <Btn kind="action" type="submit">
-                      Guardar Alterações
+                    <Btn kind="action" type="submit" disabled={isSaving}>
+                      {isSaving ? "A guardar..." : "Guardar Alterações"}
                     </Btn>
                   </div>
                 </form>
@@ -5362,21 +6180,32 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                 </span>
               </label>
 
+              {heroFormError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                  {heroFormError}
+                </div>
+              )}
+
               {/* Actions */}
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
                 <Btn
                   kind="ghost"
                   type="button"
                   onClick={() => {
+                    setHeroFormError(null);
                     setShowAddHeroBanner(false);
                     setEditingHeroBanner(null);
                   }}
                 >
                   Cancelar
                 </Btn>
-                <Btn kind="action" type="submit">
+                <Btn kind="action" type="submit" disabled={isSaving}>
                   <Icon name="Check" className="size-4" />
-                  {editingHeroBanner ? "Guardar Alterações" : "Adicionar Banner"}
+                  {isSaving
+                    ? "A guardar..."
+                    : editingHeroBanner
+                    ? "Guardar Alterações"
+                    : "Adicionar Banner"}
                 </Btn>
               </div>
             </form>

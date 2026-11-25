@@ -330,15 +330,30 @@ export function PracaMarketplace({
     setTimeout(() => setCopiedLink(false), 3000);
   };
 
+  const pracaHero = store.sectionHeroes?.praca;
+  const hasPracaHeroImg = Boolean(pracaHero?.active !== false && pracaHero?.image?.trim());
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-20">
       {/* 1. HERO DO MARKETPLACE A PRAÇA */}
       <div className="relative bg-gradient-to-br from-primary via-slate-900 to-[#12365A] text-white pt-8 pb-14 px-4 sm:px-6 lg:px-8 overflow-hidden">
+        {hasPracaHeroImg && (
+          <>
+            <img
+              src={pracaHero!.image.trim()}
+              alt="A Praça Resolve Express"
+              className={`absolute inset-0 h-full w-full pointer-events-none ${
+                pracaHero?.imageFit === "contain" ? "object-contain bg-[#071B33]" : "object-cover"
+              }`}
+            />
+            <div className="absolute inset-0 bg-gradient-to-br from-[#071B33]/85 via-[#071B33]/75 to-[#12365A]/85 pointer-events-none" />
+          </>
+        )}
         {/* Decorative elements */}
         <div className="absolute -right-20 -top-20 size-80 rounded-full bg-action/20 blur-3xl pointer-events-none" />
         <div className="absolute left-1/3 -bottom-20 size-96 rounded-full bg-blue-500/10 blur-3xl pointer-events-none" />
 
-        <div className="relative mx-auto max-w-7xl">
+        <div className="relative z-10 mx-auto max-w-7xl">
           <div className="flex flex-col md:flex-row items-center justify-between gap-6">
             <div className="max-w-2xl text-center md:text-left">
               <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3.5 py-1 text-xs font-bold text-action backdrop-blur-md border border-white/15 mb-3">

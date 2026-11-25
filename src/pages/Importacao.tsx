@@ -140,13 +140,28 @@ export function Importacao() {
     (q) => !store.currentUser || q.phone === store.currentUser.phone || q.email === store.currentUser.email || store.currentUser.role === "SUPER_ADMIN"
   );
 
+  const importacaoHero = store.sectionHeroes?.importacao;
+  const hasImportacaoHeroImg = Boolean(importacaoHero?.active !== false && importacaoHero?.image?.trim());
+
   return (
     <div className="min-h-screen bg-slate-50/60 pb-20">
       {/* Hero Banner */}
       <div className="relative overflow-hidden bg-gradient-to-br from-[#071B33] via-[#0E294B] to-[#12365A] py-14 px-4 text-white sm:py-20 sm:px-6 lg:px-8">
-        <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#E6540F_1px,transparent_1px)] [background-size:16px_16px]" />
+        {hasImportacaoHeroImg && (
+          <>
+            <img
+              src={importacaoHero!.image.trim()}
+              alt="Importação Assistida Resolve Express"
+              className={`absolute inset-0 h-full w-full pointer-events-none ${
+                importacaoHero?.imageFit === "contain" ? "object-contain bg-[#071B33]" : "object-cover"
+              }`}
+            />
+            <div className="absolute inset-0 bg-gradient-to-br from-[#071B33]/85 via-[#0E294B]/75 to-[#12365A]/85 pointer-events-none" />
+          </>
+        )}
+        <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#E6540F_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none" />
         
-        <div className="relative mx-auto max-w-5xl text-center">
+        <div className="relative z-10 mx-auto max-w-5xl text-center">
           <div className="inline-flex items-center gap-2 rounded-full bg-orange-500/20 px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-orange-300 ring-1 ring-orange-400/30">
             <Icon name="Plane" className="size-4 text-orange-400" />
             Serviço Oficial de Importação & Pagamentos Internacionais

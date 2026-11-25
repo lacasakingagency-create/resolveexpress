@@ -39,6 +39,7 @@ import {
   isSupabaseConfigured,
   getSupabasePlatformSettingsResult,
   saveSupabasePlatformSettingsDetailed,
+  getSupabaseProductsDetailed,
   getAuthAccessToken,
 } from "./supabase";
 import {
@@ -50,10 +51,19 @@ import {
 import {
   subscribeToPlatformAssets,
   subscribeToPlatformSettings,
+  subscribeToProducts,
   type RealtimeStatus,
 } from "./supabase/realtime";
 
 export type { ImportQuoteRequest, IntermediaryListing, IntermediaryNegotiation, VirtualCardRequest };
+
+export type SectionHeroKey = "praca" | "importacao" | "intermediario" | "loja";
+
+export interface SectionHeroConfig {
+  image: string;
+  imageFit?: "cover" | "contain";
+  active?: boolean;
+}
 
 export type UserRole =
   | "CUSTOMER"
@@ -436,6 +446,7 @@ export interface StoreState {
   disabledCats: Record<string, boolean>;
   featured: string[];
   heroBanners?: HeroBanner[];
+  sectionHeroes?: Partial<Record<SectionHeroKey, SectionHeroConfig>>;
 
   // Entities
   bookings: BookingRecord[];
@@ -593,6 +604,7 @@ const initial: StoreState = {
   disabledCats: {},
   featured: DEFAULT_FEATURED,
   heroBanners: DEFAULT_HERO_BANNERS,
+  sectionHeroes: {},
   customServices: [],
   deletedServices: [],
   serviceOverrides: {},
@@ -1184,6 +1196,7 @@ const SHARED_KEYS = [
   "customLogo",
   "assetRefs",
   "heroBanners",
+  "sectionHeroes",
   "categoryOverrides",
   "serviceOverrides",
   "customServices",
@@ -1480,6 +1493,42 @@ export const applyServerStateUpdates = (serverState: any) => {
       }
     }
 
+    if (nextState.sectionHeroes && typeof nextState.sectionHeroes === "object") {
+      const updatedHeroes = { ...nextState.sectionHeroes };
+      let heroesChanged = false;
+      (["praca", "importacao", "intermediario", "loja"] as SectionHeroKey[]).forEach((heroKey) => {
+        const currentHero = updatedHeroes[heroKey];
+        const resolved = resolvePublicRefUrl(refs, `sectionHero:${heroKey}`, currentHero?.image);
+        if (resolved && resolved !== currentHero?.image) {
+          updatedHeroes[heroKey] = {
+            ...(currentHero || {}),
+            image: resolved,
+          };
+          heroesChanged = true;
+        }
+      });
+      if (heroesChanged) {
+        nextState.sectionHeroes = updatedHeroes;
+        hasChanges = true;
+      }
+    }
+
+    if (Array.isArray(nextState.pracaCategories)) {
+      let pracaCatsChanged = false;
+      const resolvedPracaCats = nextState.pracaCategories.map((c) => {
+        const resolved = resolvePublicRefUrl(refs, `pracaCat:${c.id}`, c.image);
+        if (resolved && resolved !== c.image) {
+          pracaCatsChanged = true;
+          return { ...c, image: resolved };
+        }
+        return c;
+      });
+      if (pracaCatsChanged) {
+        nextState.pracaCategories = resolvedPracaCats;
+        hasChanges = true;
+      }
+    }
+
     if (Array.isArray(nextState.publicDocuments)) {
       let docsChanged = false;
       const resolvedDocs = nextState.publicDocuments.map((d) => {
@@ -1504,6 +1553,53 @@ export const applyServerStateUpdates = (serverState: any) => {
   }
 };
 
+export const hydrateProductsFromSupabase = async () => {
+  if (!isSupabaseConfigured()) return;
+  try {
+    const dbRes = await getSupabaseProductsDetailed({ includeUnavailable: true });
+    if (!dbRes.ok || dbRes.products.length === 0) return;
+
+    const dbById = new Map(dbRes.products.map((p) => [p.id, p]));
+    const existingIds = new Set<string>();
+    const mergedProducts: Product[] = [];
+
+    // Keep DB items first if new, and update matching catalog items with authoritative DB state
+    for (const currentProd of state.products || []) {
+      existingIds.add(currentProd.id);
+      const dbProd = dbById.get(currentProd.id);
+      if (dbProd) {
+        mergedProducts.push({
+          ...currentProd,
+          ...dbProd,
+          imageFit: dbProd.imageFit || currentProd.imageFit,
+          isPraca: dbProd.isPraca ?? currentProd.isPraca,
+          pracaCategoryId: dbProd.pracaCategoryId ?? currentProd.pracaCategoryId,
+          platformCommissionRate:
+            dbProd.platformCommissionRate ?? currentProd.platformCommissionRate,
+          affiliateCommissionRate:
+            dbProd.affiliateCommissionRate ?? currentProd.affiliateCommissionRate,
+        });
+      } else {
+        mergedProducts.push(currentProd);
+      }
+    }
+
+    for (const dbProd of dbRes.products) {
+      if (!existingIds.has(dbProd.id)) {
+        mergedProducts.unshift(dbProd);
+      }
+    }
+
+    if (JSON.stringify(mergedProducts) !== JSON.stringify(state.products)) {
+      state = { ...state, products: mergedProducts };
+      saveToLocalStorageSafely(state);
+      listeners.forEach((fn) => fn(state));
+    }
+  } catch (err) {
+    console.warn("hydrateProductsFromSupabase warning:", err);
+  }
+};
+
 export const fetchSharedStateFromServer = async () => {
   if (typeof window === "undefined") return;
   try {
@@ -1514,6 +1610,7 @@ export const fetchSharedStateFromServer = async () => {
         if (sbRes.settings && typeof sbRes.settings === "object" && Object.keys(sbRes.settings).length > 0) {
           applyServerStateUpdates(sbRes.settings);
         }
+        await hydrateProductsFromSupabase();
         return;
       }
       updateCloudSyncStateInStore(false, sbRes.error || "Falha ao ler platform_settings no Supabase");
@@ -1599,6 +1696,10 @@ if (typeof window !== "undefined") {
       onUpdate: (asset) => upsertPlatformAssetInStore(asset),
       onDelete: (oldRow) => removePlatformAssetFromStore(oldRow),
       onStatus: (status) => updateRealtimeStatusInStore(status),
+    });
+
+    subscribeToProducts(() => {
+      hydrateProductsFromSupabase();
     });
   } else {
     initRealtimeSSE();

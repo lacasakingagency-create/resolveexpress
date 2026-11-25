@@ -217,11 +217,26 @@ export function Intermediario() {
     return list;
   }, [store.intermediaryListings, selectedCategory, selectedCondition, selectedProvince, search, sortBy, store.currentUser]);
 
+  const intermediaryHero = store.sectionHeroes?.intermediario;
+  const hasIntermediaryHeroImg = Boolean(intermediaryHero?.active !== false && intermediaryHero?.image?.trim());
+
   return (
     <div className="min-h-screen bg-slate-50/60 pb-20">
       {/* Hero Header */}
       <div className="relative overflow-hidden bg-gradient-to-br from-[#071B33] via-[#0E294B] to-[#12365A] py-12 px-4 text-white sm:py-16 sm:px-6 lg:px-8">
-        <div className="relative mx-auto max-w-6xl">
+        {hasIntermediaryHeroImg && (
+          <>
+            <img
+              src={intermediaryHero!.image.trim()}
+              alt="Intermediação de Bens Materiais Resolve Express"
+              className={`absolute inset-0 h-full w-full pointer-events-none ${
+                intermediaryHero?.imageFit === "contain" ? "object-contain bg-[#071B33]" : "object-cover"
+              }`}
+            />
+            <div className="absolute inset-0 bg-gradient-to-br from-[#071B33]/85 via-[#0E294B]/75 to-[#12365A]/85 pointer-events-none" />
+          </>
+        )}
+        <div className="relative z-10 mx-auto max-w-6xl">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="max-w-2xl">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-orange-500/20 px-3.5 py-1 text-xs font-bold uppercase tracking-wider text-orange-300 ring-1 ring-orange-400/30">

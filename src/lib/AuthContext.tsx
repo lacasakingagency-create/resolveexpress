@@ -9,6 +9,7 @@ import {
   signUpWithSupabase,
   signOutSupabase,
   getSupabaseProfileDetailed,
+  ensureClientProfileStrict,
   mapDbRoleToUserRoleStrict,
 } from "./supabase";
 import { useStore, type UserAccount, type UserRole } from "./store";
@@ -84,7 +85,17 @@ interface AuthContextType {
     municipio?: string;
     bairro?: string;
     address?: string;
-  }) => Promise<{ error: Error | null; user?: any }>;
+    reference?: string;
+  }) => Promise<{
+    error: Error | null;
+    user?: User | null;
+    session?: Session | null;
+    requiresEmailConfirmation?: boolean;
+    profile?: UserAccount | null;
+    profileStatus?: ProfileLoadStatus;
+    profileError?: string | null;
+    profileDiagnostics?: SupabaseProfileDiagnostics | null;
+  }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<SyncProfileOutcome | null>;
   hasRole: (allowedRoles: UserRole[]) => boolean;
@@ -114,7 +125,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Never fabricates or downgrades an account to CUSTOMER on transient error or missing row.
   const syncProfile = async (
     currentUser: User,
-    options?: { forceRefresh?: boolean }
+    options?: {
+      forceRefresh?: boolean;
+      ensureIfMissingClient?: boolean;
+      overrideMeta?: {
+        fullName?: string;
+        phone?: string;
+        province?: string;
+        municipio?: string;
+        bairro?: string;
+        address?: string;
+        reference?: string;
+      };
+    }
   ): Promise<SyncProfileOutcome> => {
     if (!currentUser?.id) {
       setProfileStatus("error");
@@ -160,6 +183,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           error: null,
           diagnostics: result.diagnostics,
         };
+      }
+
+      // If row is genuinely missing (ok === true, profile === null) for a registered client
+      // (e.g. signup / first login after email confirmation when trigger hadn't run yet),
+      // safely create/upsert the client profile via auth.uid() and re-verify.
+      const normalizedEmail = (currentUser.email || "").trim().toLowerCase();
+      const shouldRecoverClientProfile =
+        result.ok &&
+        !result.profile &&
+        normalizedEmail !== "admin@resolvemcx.ao" &&
+        (options?.ensureIfMissingClient || currentUser.user_metadata?.role === "cliente");
+
+      if (shouldRecoverClientProfile) {
+        result = await ensureClientProfileStrict(currentUser, options?.overrideMeta);
+        if (syncEpoch !== authEpochRef.current) {
+          return {
+            profile: currentUserRef.current,
+            status: currentUserRef.current ? "ready" : "idle",
+            error: null,
+            diagnostics: result.diagnostics,
+          };
+        }
       }
 
       setProfileDiagnostics(result.diagnostics);
@@ -229,11 +274,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           currentUser.email?.split("@")[0] ||
           "Utilizador",
         email: result.profile.email || currentUser.email || "",
-        phone: result.profile.phone || "",
+        phone: result.profile.phone || currentUser.user_metadata?.phone || "",
         role: mappedRole,
-        province: result.profile.province || "Huambo",
-        municipio: result.profile.municipio || "Huambo",
-        bairro: result.profile.bairro || undefined,
+        province: result.profile.province || currentUser.user_metadata?.province || "Huambo",
+        municipio: result.profile.municipio || currentUser.user_metadata?.municipio || "Huambo",
+        bairro: result.profile.bairro || currentUser.user_metadata?.bairro || undefined,
+        address: result.profile.address || currentUser.user_metadata?.address || undefined,
+        reference: result.profile.reference || currentUser.user_metadata?.reference || undefined,
         avatar: result.profile.avatar_url || undefined,
         active: true,
       };
@@ -404,9 +451,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     municipio?: string;
     bairro?: string;
     address?: string;
+    reference?: string;
   }) => {
     authEpochRef.current += 1;
     setLoading(true);
+    setProfileError(null);
+    setProfileDiagnostics(null);
     try {
       // Security: Public self-registration is strictly 'cliente'. Administrative roles require database elevation.
       const dbRole = "cliente";
@@ -419,14 +469,115 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         province: params.province,
         municipio: params.municipio,
         bairro: params.bairro,
+        address: params.address,
+        reference: params.reference,
       });
 
-      if (!error && data?.user && data?.session) {
-        setUser(data.user);
-        setSession(data.session);
-        await syncProfile(data.user, { forceRefresh: true });
+      if (error) {
+        setProfileStatus("idle");
+        return {
+          error,
+          user: data?.user ?? null,
+          session: null,
+          profile: null,
+        };
       }
-      return { error, user: data?.user };
+
+      // Detect Supabase obfuscated response for already-registered email (identities: [])
+      if (
+        data?.user &&
+        Array.isArray(data.user.identities) &&
+        data.user.identities.length === 0
+      ) {
+        setProfileStatus("idle");
+        return {
+          error: new Error(
+            "Este endereço de email já se encontra registado. Inicie sessão na aba 'Iniciar Sessão'."
+          ),
+          user: null,
+          session: null,
+          profile: null,
+        };
+      }
+
+      if (!data?.user) {
+        setProfileStatus("idle");
+        return {
+          error: new Error("O Supabase Auth não criou o registo do utilizador."),
+          user: null,
+          session: null,
+          profile: null,
+        };
+      }
+
+      // Email confirmation required (user created in auth.users, session intentionally null until verified)
+      if (!data.session) {
+        setProfileStatus("idle");
+        return {
+          error: null,
+          user: data.user,
+          session: null,
+          requiresEmailConfirmation: true,
+          profile: null,
+          profileStatus: "idle" as ProfileLoadStatus,
+        };
+      }
+
+      // Ensure session is committed before querying/inserting into public.profiles
+      const { data: activeSessData } = await supabase.auth.getSession();
+      if (!activeSessData?.session?.access_token) {
+        await supabase.auth.setSession({
+          access_token: data.session.access_token,
+          refresh_token: data.session.refresh_token,
+        });
+      }
+
+      setUser(data.user);
+      setSession(data.session);
+
+      const outcome = await syncProfile(data.user, {
+        forceRefresh: true,
+        ensureIfMissingClient: true,
+        overrideMeta: {
+          fullName: params.fullName,
+          phone: params.phone,
+          province: params.province,
+          municipio: params.municipio,
+          bairro: params.bairro,
+          address: params.address,
+          reference: params.reference,
+        },
+      });
+
+      if (outcome.status !== "ready" || !outcome.profile) {
+        return {
+          error: new Error(
+            outcome.error ||
+              "A conta foi criada no Auth, mas o perfil não foi confirmado na tabela public.profiles."
+          ),
+          user: data.user,
+          session: data.session,
+          requiresEmailConfirmation: false,
+          profile: null,
+          profileStatus: outcome.status,
+          profileError: outcome.error,
+          profileDiagnostics: outcome.diagnostics,
+        };
+      }
+
+      refreshPlatformAssetsSnapshot();
+      refreshPlatformSettingsSnapshot();
+
+      return {
+        error: null,
+        user: data.user,
+        session: data.session,
+        requiresEmailConfirmation: false,
+        profile: outcome.profile,
+        profileStatus: outcome.status,
+        profileError: null,
+        profileDiagnostics: outcome.diagnostics,
+      };
     } finally {
       setLoading(false);
     }

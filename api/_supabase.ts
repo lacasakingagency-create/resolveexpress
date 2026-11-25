@@ -5,6 +5,7 @@ export const PUBLIC_SHARED_KEYS = [
   "customLogo",
   "assetRefs",
   "heroBanners",
+  "sectionHeroes",
   "categoryOverrides",
   "serviceOverrides",
   "customServices",

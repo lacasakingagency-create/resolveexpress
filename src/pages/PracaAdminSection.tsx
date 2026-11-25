@@ -1,16 +1,23 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Icon } from "../ui/kit";
 import { useStore, kz, saveAdminStateAsync } from "../lib/store";
 import {
+  PRODUCT_CATEGORIES,
   PracaCategory,
-  SellerRecord,
-  AffiliateRecord,
-  PracaPayoutRequest,
+  Product,
 } from "../lib/data";
+import {
+  deleteSupabaseProductStrict,
+  getAuthAccessToken,
+  isSupabaseConfigured,
+  saveSupabaseProductStrict,
+  updateSupabaseProductPatch,
+} from "../lib/supabase";
+import { buildAssetReference, type AssetReference } from "../lib/supabase/storage";
 import { ImageUploader } from "../ui/ImageUploader";
 
 export function PracaAdminSection() {
-  const [store, update] = useStore();
+  const [store] = useStore();
   const [subTab, setSubTab] = useState<
     | "overview"
     | "sellers"
@@ -22,6 +29,40 @@ export function PracaAdminSection() {
     | "commissions"
     | "payouts"
   >("overview");
+
+  const [sectionFeedback, setSectionFeedback] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [savingCategory, setSavingCategory] = useState(false);
+  const [busyActionId, setBusyActionId] = useState<string | null>(null);
+
+  const showFeedback = (ok: boolean, message: string) => {
+    setSectionFeedback({ ok, message });
+    if (ok) {
+      setTimeout(() => {
+        setSectionFeedback((prev) => (prev?.message === message ? null : prev));
+      }, 4500);
+    }
+  };
+
+  const safeReplaceImage = async (oldUrl?: string, newUrl?: string) => {
+    if (!oldUrl || oldUrl === newUrl) return;
+    try {
+      const token = await getAuthAccessToken();
+      await fetch("/api/storage/safe-replace-image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ oldUrl, newUrl: newUrl || "" }),
+      });
+    } catch (err) {
+      console.warn("Praca safeReplaceImage warning:", err);
+    }
+  };
 
   // Category Editor State
   const [editingCategory, setEditingCategory] = useState<PracaCategory | null>(null);
@@ -35,9 +76,20 @@ export function PracaAdminSection() {
   const [newCatCommission, setNewCatCommission] = useState(10);
   const [newCatAffCommission, setNewCatAffCommission] = useState(5);
   const [newCatSubcats, setNewCatSubcats] = useState("");
+  const [catAssetRef, setCatAssetRef] = useState<AssetReference | null>(null);
   const [catSaveError, setCatSaveError] = useState<string | null>(null);
 
-  // Commission Settings State
+  // Praca Product Search, Filter & Modal State
+  const [prodSearch, setProdSearch] = useState("");
+  const [prodCatFilter, setProdCatFilter] = useState("TODAS");
+  const [prodStatusFilter, setProdStatusFilter] = useState<"ALL" | "ATIVO" | "OCULTO">("ALL");
+  const [editingPracaProd, setEditingPracaProd] = useState<Product | null>(null);
+  const [isCreatingPracaProd, setIsCreatingPracaProd] = useState(false);
+  const [pracaProdAssetRef, setPracaProdAssetRef] = useState<AssetReference | null>(null);
+  const [savingPracaProd, setSavingPracaProd] = useState(false);
+  const [pracaProdError, setPracaProdError] = useState<string | null>(null);
+
+  // Commission Settings State (synced with Realtime platform_settings)
   const [settingsForm, setSettingsForm] = useState({
     defaultPlatformCommission: store.pracaSettings?.defaultPlatformCommission ?? 10,
     defaultAffiliateCommission: store.pracaSettings?.defaultAffiliateCommission ?? 5,
@@ -47,6 +99,19 @@ export function PracaAdminSection() {
     autoApproveSellers: !!store.pracaSettings?.autoApproveSellers,
     autoApproveProducts: !!store.pracaSettings?.autoApproveProducts,
   });
+
+  useEffect(() => {
+    if (!store.pracaSettings) return;
+    setSettingsForm({
+      defaultPlatformCommission: store.pracaSettings.defaultPlatformCommission ?? 10,
+      defaultAffiliateCommission: store.pracaSettings.defaultAffiliateCommission ?? 5,
+      affiliateCommissionPayer: store.pracaSettings.affiliateCommissionPayer ?? "SELLER",
+      attributionWindowDays: store.pracaSettings.attributionWindowDays ?? 30,
+      minPayoutAmountAOA: store.pracaSettings.minPayoutAmountAOA ?? 10000,
+      autoApproveSellers: !!store.pracaSettings.autoApproveSellers,
+      autoApproveProducts: !!store.pracaSettings.autoApproveProducts,
+    });
+  }, [store.pracaSettings]);
 
   // Calculate Marketplace GMV and Commissions
   const marketplaceOrders = (store.productOrders || []).filter(
@@ -81,29 +146,87 @@ export function PracaAdminSection() {
     (s) => s.status === "EM_ANALISE" || s.status === "REGISTO_INICIADO"
   );
 
-  const pracaProducts = (store.products || []).filter((p) => p.isPraca);
+  const pracaProducts = (store.products || []).filter(
+    (p) => p.isPraca || p.sellerType === "PRACA_SELLER"
+  );
+
+  const filteredPracaProducts = pracaProducts.filter((p) => {
+    const q = prodSearch.trim().toLowerCase();
+    const matchSearch =
+      !q ||
+      p.name.toLowerCase().includes(q) ||
+      (p.sellerName || "").toLowerCase().includes(q) ||
+      (p.sku || p.id).toLowerCase().includes(q) ||
+      (p.category || "").toLowerCase().includes(q);
+    const matchCat =
+      prodCatFilter === "TODAS" ||
+      p.pracaCategoryId === prodCatFilter ||
+      p.category === prodCatFilter;
+    const matchStatus =
+      prodStatusFilter === "ALL" ||
+      (prodStatusFilter === "ATIVO" ? p.available !== false : p.available === false);
+    return matchSearch && matchCat && matchStatus;
+  });
 
   // Category Actions
   const handleSaveCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     setCatSaveError(null);
+
     if (editingCategory) {
+      if (!editingCategory.name.trim()) {
+        setCatSaveError("O nome da categoria é obrigatório.");
+        return;
+      }
+      if (
+        Number(editingCategory.defaultCommissionRate) < 1 ||
+        Number(editingCategory.defaultCommissionRate) > 50 ||
+        Number(editingCategory.affiliateCommissionRate) < 0 ||
+        Number(editingCategory.affiliateCommissionRate) > 50
+      ) {
+        setCatSaveError("As comissões da categoria devem situar-se entre 0% e 50%.");
+        return;
+      }
+      const prevCat = store.pracaCategories.find((c) => c.id === editingCategory.id);
+      const oldImage = prevCat?.image;
+      setSavingCategory(true);
       const res = await saveAdminStateAsync(
-        (s) => ({
-          pracaCategories: s.pracaCategories.map((c) =>
-            c.id === editingCategory.id ? editingCategory : c
-          ),
-        }),
+        (s) => {
+          const nextRefs = { ...(s.assetRefs || {}) };
+          if (catAssetRef) {
+            nextRefs[`pracaCat:${editingCategory.id}`] = catAssetRef;
+          }
+          return {
+            pracaCategories: s.pracaCategories.map((c) =>
+              c.id === editingCategory.id
+                ? { ...editingCategory, name: editingCategory.name.trim() }
+                : c
+            ),
+            assetRefs: nextRefs,
+          };
+        },
         "Atualização de Categoria da Praça",
         `Categoria ${editingCategory.name}`
       );
+      setSavingCategory(false);
       if (!res.ok) {
-        setCatSaveError(res.error || "Falha ao gravar alterações da categoria no Supabase. Verifique a ligação/permissões.");
+        setCatSaveError(
+          res.error ||
+            "Falha ao gravar alterações da categoria no Supabase. Verifique a ligação/permissões."
+        );
         return;
       }
+      if (oldImage && editingCategory.image && oldImage !== editingCategory.image) {
+        await safeReplaceImage(oldImage, editingCategory.image);
+      }
+      setCatAssetRef(null);
       setEditingCategory(null);
+      showFeedback(true, `Categoria "${editingCategory.name}" atualizada e sincronizada no Supabase.`);
     } else {
-      if (!newCatName.trim()) return;
+      if (!newCatName.trim()) {
+        setCatSaveError("O nome da categoria é obrigatório.");
+        return;
+      }
       const newCat: PracaCategory = {
         id: `praca-cat-${Date.now()}`,
         name: newCatName.trim(),
@@ -112,49 +235,85 @@ export function PracaAdminSection() {
         image: newCatImage,
         active: true,
         order: store.pracaCategories.length + 1,
-        defaultCommissionRate: newCatCommission,
-        affiliateCommissionRate: newCatAffCommission,
+        defaultCommissionRate: Number(newCatCommission),
+        affiliateCommissionRate: Number(newCatAffCommission),
         subcategories: newCatSubcats
           .split(",")
           .map((sub) => sub.trim())
           .filter(Boolean),
       };
+      setSavingCategory(true);
       const res = await saveAdminStateAsync(
-        (s) => ({
-          pracaCategories: [...s.pracaCategories, newCat],
-        }),
+        (s) => {
+          const nextRefs = { ...(s.assetRefs || {}) };
+          if (catAssetRef) {
+            nextRefs[`pracaCat:${newCat.id}`] = catAssetRef;
+          }
+          return {
+            pracaCategories: [...s.pracaCategories, newCat],
+            assetRefs: nextRefs,
+          };
+        },
         "Criação de Categoria da Praça",
         `Nova categoria: ${newCat.name}`
       );
+      setSavingCategory(false);
       if (!res.ok) {
-        setCatSaveError(res.error || "Falha ao criar categoria no Supabase. Verifique a ligação/permissões.");
+        setCatSaveError(
+          res.error ||
+            "Falha ao criar categoria no Supabase. Verifique a ligação/permissões."
+        );
         return;
       }
+      setCatAssetRef(null);
       setShowAddCategory(false);
       setNewCatName("");
       setNewCatDesc("");
       setNewCatSubcats("");
+      showFeedback(true, `Categoria "${newCat.name}" criada e sincronizada no Supabase.`);
     }
   };
 
   const handleDeleteCategory = async (catId: string) => {
-    const hasProducts = pracaProducts.some((p) => p.category === catId || p.pracaCategoryId === catId);
+    const targetCat = store.pracaCategories.find((c) => c.id === catId);
+    const hasProducts = pracaProducts.some(
+      (p) => p.category === catId || p.pracaCategoryId === catId
+    );
     if (hasProducts) {
-      alert("Não é possível eliminar uma categoria que contenha produtos ativos. Mova os produtos primeiro.");
+      showFeedback(
+        false,
+        "Não é possível eliminar uma categoria que contenha produtos associados. Reatribua os produtos primeiro."
+      );
       return;
     }
     if (!confirm("Tem a certeza que deseja eliminar esta categoria da Praça?")) return;
-    await saveAdminStateAsync(
-      (s) => ({
-        pracaCategories: s.pracaCategories.filter((c) => c.id !== catId),
-      }),
+    setBusyActionId(catId);
+    const res = await saveAdminStateAsync(
+      (s) => {
+        const nextRefs = { ...(s.assetRefs || {}) };
+        delete nextRefs[`pracaCat:${catId}`];
+        return {
+          pracaCategories: s.pracaCategories.filter((c) => c.id !== catId),
+          assetRefs: nextRefs,
+        };
+      },
       "Remoção de Categoria da Praça",
       `Categoria ID: ${catId}`
     );
+    setBusyActionId(null);
+    if (!res.ok) {
+      showFeedback(false, `Erro ao eliminar categoria: ${res.error || "Erro desconhecido"}`);
+      return;
+    }
+    if (targetCat?.image) {
+      await safeReplaceImage(targetCat.image, "");
+    }
+    showFeedback(true, "Categoria removida com sucesso.");
   };
 
   const handleToggleCategoryActive = async (catId: string) => {
-    await saveAdminStateAsync(
+    setBusyActionId(catId);
+    const res = await saveAdminStateAsync(
       (s) => ({
         pracaCategories: s.pracaCategories.map((c) =>
           c.id === catId ? { ...c, active: !c.active } : c
@@ -163,11 +322,18 @@ export function PracaAdminSection() {
       "Alternar Ativação de Categoria",
       `Categoria ID: ${catId}`
     );
+    setBusyActionId(null);
+    if (!res.ok) {
+      showFeedback(false, `Falha ao alterar estado da categoria: ${res.error || "Erro desconhecido"}`);
+      return;
+    }
+    showFeedback(true, "Estado da categoria atualizado e sincronizado no Supabase.");
   };
 
   // Seller Approval Actions
   const handleApproveSeller = async (sellerId: string) => {
-    await saveAdminStateAsync(
+    setBusyActionId(sellerId);
+    const res = await saveAdminStateAsync(
       (s) => ({
         sellers: s.sellers.map((sel) =>
           sel.id === sellerId ? { ...sel, status: "APROVADO" } : sel
@@ -176,10 +342,17 @@ export function PracaAdminSection() {
       "Aprovação de Vendedor da Praça",
       `Vendedor ID: ${sellerId}`
     );
+    setBusyActionId(null);
+    if (!res.ok) {
+      showFeedback(false, `Erro ao aprovar vendedor: ${res.error || "Erro desconhecido"}`);
+      return;
+    }
+    showFeedback(true, "Vendedor aprovado e sincronizado com o Supabase.");
   };
 
   const handleRejectSeller = async (sellerId: string) => {
-    await saveAdminStateAsync(
+    setBusyActionId(sellerId);
+    const res = await saveAdminStateAsync(
       (s) => ({
         sellers: s.sellers.map((sel) =>
           sel.id === sellerId ? { ...sel, status: "REJEITADO" } : sel
@@ -188,10 +361,17 @@ export function PracaAdminSection() {
       "Rejeição de Vendedor da Praça",
       `Vendedor ID: ${sellerId}`
     );
+    setBusyActionId(null);
+    if (!res.ok) {
+      showFeedback(false, `Erro ao rejeitar vendedor: ${res.error || "Erro desconhecido"}`);
+      return;
+    }
+    showFeedback(true, "Candidatura rejeitada e registada no Supabase.");
   };
 
   const handleSuspendSeller = async (sellerId: string) => {
-    await saveAdminStateAsync(
+    setBusyActionId(sellerId);
+    const res = await saveAdminStateAsync(
       (s) => ({
         sellers: s.sellers.map((sel) =>
           sel.id === sellerId ? { ...sel, status: "SUSPENSO" } : sel
@@ -200,11 +380,18 @@ export function PracaAdminSection() {
       "Suspensão de Vendedor da Praça",
       `Vendedor ID: ${sellerId}`
     );
+    setBusyActionId(null);
+    if (!res.ok) {
+      showFeedback(false, `Erro ao suspender vendedor: ${res.error || "Erro desconhecido"}`);
+      return;
+    }
+    showFeedback(true, "Vendedor suspenso e sincronizado no Supabase.");
   };
 
   // Payout Actions
   const handleApprovePayout = async (payoutId: string) => {
-    await saveAdminStateAsync(
+    setBusyActionId(payoutId);
+    const res = await saveAdminStateAsync(
       (s) => ({
         pracaPayoutRequests: s.pracaPayoutRequests.map((p) =>
           p.id === payoutId
@@ -220,27 +407,340 @@ export function PracaAdminSection() {
       "Liquidação de Levantamento da Praça",
       `Pedido de Pagamento ID: ${payoutId}`
     );
+    setBusyActionId(null);
+    if (!res.ok) {
+      showFeedback(false, `Erro ao confirmar pagamento: ${res.error || "Erro desconhecido"}`);
+      return;
+    }
+    showFeedback(true, "Levantamento confirmado e sincronizado no Supabase.");
   };
 
-  // Save Settings
+  // Save Settings (Validated + Confirmed against Supabase)
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    await saveAdminStateAsync(
+    const platComm = Number(settingsForm.defaultPlatformCommission);
+    const affComm = Number(settingsForm.defaultAffiliateCommission);
+    const attrDays = Number(settingsForm.attributionWindowDays);
+    const minPayout = Number(settingsForm.minPayoutAmountAOA);
+
+    if (Number.isNaN(platComm) || platComm < 1 || platComm > 50) {
+      showFeedback(false, "A comissão da plataforma deve estar entre 1% e 50%.");
+      return;
+    }
+    if (Number.isNaN(affComm) || affComm < 0 || affComm > 50) {
+      showFeedback(false, "A comissão de afiliados deve estar entre 0% e 50%.");
+      return;
+    }
+    if (Number.isNaN(attrDays) || attrDays < 1 || attrDays > 365) {
+      showFeedback(false, "A janela de atribuição deve estar entre 1 e 365 dias.");
+      return;
+    }
+    if (Number.isNaN(minPayout) || minPayout < 0) {
+      showFeedback(false, "O levantamento mínimo deve ser maior ou igual a 0 Kz.");
+      return;
+    }
+
+    setSavingSettings(true);
+    setSectionFeedback(null);
+    const res = await saveAdminStateAsync(
       () => ({
         pracaSettings: {
-          defaultPlatformCommission: Number(settingsForm.defaultPlatformCommission),
-          defaultAffiliateCommission: Number(settingsForm.defaultAffiliateCommission),
-          affiliateCommissionPayer: settingsForm.affiliateCommissionPayer as "SELLER" | "PLATFORM" | "SPLIT",
-          attributionWindowDays: Number(settingsForm.attributionWindowDays),
-          minPayoutAmountAOA: Number(settingsForm.minPayoutAmountAOA),
+          defaultPlatformCommission: platComm,
+          defaultAffiliateCommission: affComm,
+          affiliateCommissionPayer: settingsForm.affiliateCommissionPayer as
+            | "SELLER"
+            | "PLATFORM"
+            | "SPLIT",
+          attributionWindowDays: attrDays,
+          minPayoutAmountAOA: minPayout,
           autoApproveSellers: settingsForm.autoApproveSellers,
           autoApproveProducts: settingsForm.autoApproveProducts,
         },
       }),
       "Configurações Gerais da Praça",
-      `Comissão Plataforma: ${settingsForm.defaultPlatformCommission}%, Afiliados: ${settingsForm.defaultAffiliateCommission}%`
+      `Comissão Plataforma: ${platComm}%, Afiliados: ${affComm}%`
     );
-    alert("Definições da Praça gravadas com sucesso e sincronizadas permanentemente com todos os utilizadores!");
+    setSavingSettings(false);
+
+    if (!res.ok) {
+      showFeedback(
+        false,
+        `Falha ao gravar definições da Praça no Supabase: ${res.error || "Erro desconhecido"}`
+      );
+      return;
+    }
+    showFeedback(
+      true,
+      "Definições da Praça gravadas no Supabase e sincronizadas com todos os utilizadores."
+    );
+  };
+
+  // Praca Product CRUD (persists to public.products + platform_settings)
+  const openNewPracaProductModal = () => {
+    const firstSeller = store.sellers?.[0];
+    const firstPracaCat = store.pracaCategories?.[0];
+    setIsCreatingPracaProd(true);
+    setPracaProdAssetRef(null);
+    setPracaProdError(null);
+    setEditingPracaProd({
+      id: `PRACA-PROD-${Date.now()}`,
+      name: "",
+      description: "",
+      priceAOA: 5000,
+      available: true,
+      stock: 15,
+      sellerName: firstSeller?.storeName || "Vendedor Oficial Praça",
+      sellerId: firstSeller?.id || "seller-admin",
+      sellerType: "PRACA_SELLER",
+      category: firstPracaCat?.name || PRODUCT_CATEGORIES[1] || "Eletrónicos e Informática",
+      image: "",
+      imageFit: "cover",
+      deliveryLocation: "Huambo e envio nacional",
+      estimatedDelivery: "24h a 48h",
+      unit: "unidade",
+      rating: 5.0,
+      reviewsCount: 1,
+      isPraca: true,
+      pracaCategoryId: firstPracaCat?.id,
+      condition: "NOVO",
+      platformCommissionRate: settingsForm.defaultPlatformCommission,
+      affiliateCommissionRate: settingsForm.defaultAffiliateCommission,
+      status: "ATIVO",
+    });
+  };
+
+  const openEditPracaProductModal = (prod: Product) => {
+    setIsCreatingPracaProd(false);
+    setPracaProdAssetRef(null);
+    setPracaProdError(null);
+    setEditingPracaProd({
+      ...prod,
+      isPraca: true,
+      imageFit: prod.imageFit || "cover",
+      condition: prod.condition || "NOVO",
+      platformCommissionRate:
+        prod.platformCommissionRate ?? settingsForm.defaultPlatformCommission,
+      affiliateCommissionRate:
+        prod.affiliateCommissionRate ?? settingsForm.defaultAffiliateCommission,
+    });
+  };
+
+  const handleSavePracaProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPracaProd) return;
+    if (!editingPracaProd.name.trim()) {
+      setPracaProdError("O nome do produto é obrigatório.");
+      return;
+    }
+    if (Number(editingPracaProd.priceAOA) <= 0) {
+      setPracaProdError("O preço de venda deve ser superior a 0 AOA.");
+      return;
+    }
+    if (Number(editingPracaProd.stock) < 0) {
+      setPracaProdError("O stock não pode ser negativo.");
+      return;
+    }
+
+    const oldProd = store.products.find((p) => p.id === editingPracaProd.id);
+    const oldImg = oldProd?.image;
+    const normalizedProd: Product = {
+      ...editingPracaProd,
+      name: editingPracaProd.name.trim(),
+      sellerName: editingPracaProd.sellerName?.trim() || "Vendedor Praça",
+      priceAOA: Number(editingPracaProd.priceAOA),
+      promotionalPriceAOA:
+        editingPracaProd.promotionalPriceAOA && Number(editingPracaProd.promotionalPriceAOA) > 0
+          ? Number(editingPracaProd.promotionalPriceAOA)
+          : undefined,
+      stock: Math.max(0, Math.floor(Number(editingPracaProd.stock || 0))),
+      isPraca: true,
+      sellerType: editingPracaProd.sellerType || "PRACA_SELLER",
+      status: editingPracaProd.available ? "ATIVO" : "OCULTO",
+    };
+
+    setSavingPracaProd(true);
+    setPracaProdError(null);
+
+    if (isSupabaseConfigured()) {
+      const sbRes = await saveSupabaseProductStrict(normalizedProd);
+      if (!sbRes.ok) {
+        setSavingPracaProd(false);
+        setPracaProdError(
+          `Falha ao gravar produto em public.products: ${sbRes.error || "Erro desconhecido"}`
+        );
+        return;
+      }
+    }
+
+    const res = await saveAdminStateAsync(
+      (s) => {
+        const nextRefs = { ...(s.assetRefs || {}) };
+        if (pracaProdAssetRef) {
+          nextRefs[`product:${normalizedProd.id}`] = pracaProdAssetRef;
+        }
+        const exists = s.products.some((p) => p.id === normalizedProd.id);
+        return {
+          products: exists
+            ? s.products.map((p) => (p.id === normalizedProd.id ? normalizedProd : p))
+            : [normalizedProd, ...s.products],
+          assetRefs: nextRefs,
+        };
+      },
+      isCreatingPracaProd ? "Criação de Produto da Praça" : "Edição de Produto da Praça",
+      `Produto: ${normalizedProd.name} (${normalizedProd.id})`
+    );
+    setSavingPracaProd(false);
+
+    if (!res.ok) {
+      setPracaProdError(`Falha ao sincronizar catálogo: ${res.error || "Erro desconhecido"}`);
+      return;
+    }
+
+    if (oldImg && normalizedProd.image && oldImg !== normalizedProd.image) {
+      await safeReplaceImage(oldImg, normalizedProd.image);
+    }
+
+    setPracaProdAssetRef(null);
+    setEditingPracaProd(null);
+    showFeedback(
+      true,
+      `Produto "${normalizedProd.name}" ${isCreatingPracaProd ? "publicado" : "atualizado"} no Supabase.`
+    );
+  };
+
+  const handleTogglePracaProduct = async (prod: Product) => {
+    const nextAvailable = !prod.available;
+    const nextStatus: Product["status"] = nextAvailable ? "ATIVO" : "OCULTO";
+    setBusyActionId(prod.id);
+
+    if (isSupabaseConfigured()) {
+      const patchRes = await updateSupabaseProductPatch(prod.id, {
+        available: nextAvailable,
+        status: nextStatus,
+      });
+      if (!patchRes.ok) {
+        if (patchRes.notFound) {
+          const upsertRes = await saveSupabaseProductStrict({
+            ...prod,
+            available: nextAvailable,
+            status: nextStatus,
+          });
+          if (!upsertRes.ok) {
+            setBusyActionId(null);
+            showFeedback(false, `Erro ao alterar estado no Supabase: ${upsertRes.error}`);
+            return;
+          }
+        } else {
+          setBusyActionId(null);
+          showFeedback(false, `Erro ao alterar estado no Supabase: ${patchRes.error}`);
+          return;
+        }
+      }
+    }
+
+    const res = await saveAdminStateAsync(
+      (s) => ({
+        products: s.products.map((p) =>
+          p.id === prod.id ? { ...p, available: nextAvailable, status: nextStatus } : p
+        ),
+      }),
+      "Alternar Estado do Produto da Praça",
+      `Produto ${prod.name} -> ${nextAvailable ? "Ativo" : "Desativado"}`
+    );
+    setBusyActionId(null);
+    if (!res.ok) {
+      showFeedback(false, `Falha ao guardar estado: ${res.error || "Erro desconhecido"}`);
+      return;
+    }
+    showFeedback(
+      true,
+      `Produto "${prod.name}" ${nextAvailable ? "ativado" : "desativado"} com sucesso.`
+    );
+  };
+
+  const handleUpdatePracaStock = async (prod: Product, delta: number) => {
+    const nextStock = Math.max(0, Number(prod.stock || 0) + delta);
+    setBusyActionId(prod.id);
+
+    if (isSupabaseConfigured()) {
+      const patchRes = await updateSupabaseProductPatch(prod.id, { stock: nextStock });
+      if (!patchRes.ok) {
+        if (patchRes.notFound) {
+          const upsertRes = await saveSupabaseProductStrict({ ...prod, stock: nextStock });
+          if (!upsertRes.ok) {
+            setBusyActionId(null);
+            showFeedback(false, `Erro ao atualizar stock no Supabase: ${upsertRes.error}`);
+            return;
+          }
+        } else {
+          setBusyActionId(null);
+          showFeedback(false, `Erro ao atualizar stock no Supabase: ${patchRes.error}`);
+          return;
+        }
+      }
+    }
+
+    const res = await saveAdminStateAsync(
+      (s) => ({
+        products: s.products.map((p) => (p.id === prod.id ? { ...p, stock: nextStock } : p)),
+      }),
+      "Atualização de Stock da Praça",
+      `Produto ${prod.name} -> Stock ${nextStock}`
+    );
+    setBusyActionId(null);
+    if (!res.ok) {
+      showFeedback(false, `Falha ao atualizar stock: ${res.error || "Erro desconhecido"}`);
+      return;
+    }
+    showFeedback(true, `Stock de "${prod.name}" atualizado para ${nextStock}.`);
+  };
+
+  const handleDeletePracaProduct = async (prod: Product) => {
+    const hasOrders = (store.productOrders || []).some((ord) =>
+      ord.items?.some((it) => it.product?.id === prod.id)
+    );
+    if (hasOrders) {
+      showFeedback(
+        false,
+        `O produto "${prod.name}" possui encomendas no histórico. Utilize "Desativar" em vez de eliminar para preservar os registos de encomendas.`
+      );
+      return;
+    }
+    if (!confirm(`Tem a certeza que deseja eliminar definitivamente o produto "${prod.name}"?`)) {
+      return;
+    }
+    setBusyActionId(prod.id);
+    if (isSupabaseConfigured()) {
+      const delRes = await deleteSupabaseProductStrict(prod.id);
+      if (!delRes.ok) {
+        setBusyActionId(null);
+        showFeedback(false, `Falha ao eliminar no Supabase: ${delRes.error || "Erro desconhecido"}`);
+        return;
+      }
+    }
+    const res = await saveAdminStateAsync(
+      (s) => {
+        const nextRefs = { ...(s.assetRefs || {}) };
+        delete nextRefs[`product:${prod.id}`];
+        return {
+          products: s.products.filter((p) => p.id !== prod.id),
+          featuredProducts: (s.featuredProducts || []).filter((id) => id !== prod.id),
+          featuredHomeProducts: (s.featuredHomeProducts || []).filter((id) => id !== prod.id),
+          assetRefs: nextRefs,
+        };
+      },
+      "Remoção de Produto da Praça",
+      `Produto eliminado: ${prod.name} (${prod.id})`
+    );
+    setBusyActionId(null);
+    if (!res.ok) {
+      showFeedback(false, `Falha ao remover produto do catálogo: ${res.error || "Erro desconhecido"}`);
+      return;
+    }
+    if (prod.image) {
+      await safeReplaceImage(prod.image, "");
+    }
+    showFeedback(true, `Produto "${prod.name}" eliminado com sucesso.`);
   };
 
   return (
@@ -306,6 +806,31 @@ export function PracaAdminSection() {
           </button>
         ))}
       </div>
+
+      {sectionFeedback && (
+        <div
+          className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-xs font-bold ${
+            sectionFeedback.ok
+              ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+              : "border-red-300 bg-red-50 text-red-900"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <Icon
+              name={sectionFeedback.ok ? "CheckCircle2" : "AlertTriangle"}
+              className="size-4 shrink-0"
+            />
+            <span>{sectionFeedback.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSectionFeedback(null)}
+            className="underline opacity-75 hover:opacity-100 cursor-pointer"
+          >
+            Fechar
+          </button>
+        </div>
+      )}
 
       {/* SUB-TAB: OVERVIEW */}
       {subTab === "overview" && (
@@ -610,15 +1135,67 @@ export function PracaAdminSection() {
 
       {/* SUB-TAB: PRODUCTS */}
       {subTab === "products" && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
-          <div className="mb-4 flex items-center justify-between">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-base font-black text-slate-900">
-                Produtos Publicados na Praça ({pracaProducts.length})
+                Produtos Publicados na Praça ({filteredPracaProducts.length} / {pracaProducts.length})
               </h3>
               <p className="text-xs text-slate-500">
-                Supervisão de anúncios de terceiros, controlo de preços e conformidade
+                Criação, edição, imagens, controlo de stock, estado e eliminação sincronizados com o Supabase
               </p>
+            </div>
+            <button
+              type="button"
+              onClick={openNewPracaProductModal}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[#E6540F] px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-[#cf490a] cursor-pointer"
+            >
+              <Icon name="Plus" className="size-4" />
+              Novo Produto da Praça
+            </button>
+          </div>
+
+          {/* Search & Filters */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
+            <div className="sm:col-span-5 relative">
+              <Icon name="Search" className="absolute left-3 top-2.5 size-4 text-slate-400" />
+              <input
+                type="text"
+                value={prodSearch}
+                onChange={(e) => setProdSearch(e.target.value)}
+                placeholder="Pesquisar por nome, vendedor ou SKU..."
+                className="w-full rounded-xl border border-slate-300 pl-9 pr-3 py-2 text-xs"
+              />
+            </div>
+            <div className="sm:col-span-4">
+              <select
+                value={prodCatFilter}
+                onChange={(e) => setProdCatFilter(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs bg-white"
+              >
+                <option value="TODAS">Todas as Categorias</option>
+                {(store.pracaCategories || []).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="sm:col-span-3 flex gap-1">
+              {(["ALL", "ATIVO", "OCULTO"] as const).map((stFilter) => (
+                <button
+                  key={stFilter}
+                  type="button"
+                  onClick={() => setProdStatusFilter(stFilter)}
+                  className={`flex-1 rounded-xl px-2 py-2 text-[11px] font-bold transition cursor-pointer ${
+                    prodStatusFilter === stFilter
+                      ? "bg-[#071B33] text-white"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  {stFilter === "ALL" ? "Todos" : stFilter === "ATIVO" ? "Ativos" : "Ocultos"}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -631,24 +1208,27 @@ export function PracaAdminSection() {
                   <th className="p-3">Categoria</th>
                   <th className="p-3">Condição</th>
                   <th className="p-3">Preço Venda</th>
-                  <th className="p-3">Comissão Praça</th>
-                  <th className="p-3">Comissão Afil.</th>
+                  <th className="p-3">Comissões</th>
                   <th className="p-3">Stock</th>
-                  <th className="p-3 text-right">Ação</th>
+                  <th className="p-3">Estado</th>
+                  <th className="p-3 text-right">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {pracaProducts.map((p) => {
-                  const platRate = (p.platformCommissionRate || 10) / 100;
-                  const affRate = (p.affiliateCommissionRate || 5) / 100;
+                {filteredPracaProducts.map((p) => {
+                  const platRate = p.platformCommissionRate ?? settingsForm.defaultPlatformCommission;
+                  const affRate = p.affiliateCommissionRate ?? settingsForm.defaultAffiliateCommission;
+                  const isBusy = busyActionId === p.id;
                   return (
-                    <tr key={p.id} className="hover:bg-slate-50/60">
+                    <tr key={p.id} className={`hover:bg-slate-50/60 ${!p.available ? "opacity-65" : ""}`}>
                       <td className="p-3">
                         <div className="flex items-center gap-2.5">
                           <img
                             src={p.image?.trim() || "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600"}
                             alt={p.name}
-                            className="size-9 rounded-lg object-cover border border-slate-200"
+                            className={`size-10 rounded-lg border border-slate-200 ${
+                              p.imageFit === "contain" ? "object-contain bg-slate-100 p-0.5" : "object-cover"
+                            }`}
                           />
                           <div>
                             <p className="font-bold text-slate-900">{p.name}</p>
@@ -663,35 +1243,366 @@ export function PracaAdminSection() {
                           {p.condition || "NOVO"}
                         </span>
                       </td>
-                      <td className="p-3 font-bold text-slate-900">{kz(p.priceAOA)}</td>
-                      <td className="p-3 text-orange-600 font-bold">
-                        {Math.round(platRate * 100)}% ({kz(p.priceAOA * platRate)})
+                      <td className="p-3 font-bold text-slate-900">
+                        {kz(p.promotionalPriceAOA || p.priceAOA)}
+                        {p.promotionalPriceAOA && (
+                          <span className="block text-[10px] text-slate-400 line-through">
+                            {kz(p.priceAOA)}
+                          </span>
+                        )}
                       </td>
-                      <td className="p-3 text-blue-600 font-bold">
-                        {Math.round(affRate * 100)}% ({kz(p.priceAOA * affRate)})
+                      <td className="p-3 text-[11px]">
+                        <span className="block text-orange-600 font-bold">Praça {platRate}%</span>
+                        <span className="block text-blue-600 font-bold">Afil. {affRate}%</span>
                       </td>
-                      <td className="p-3 font-mono">{p.stock}</td>
-                      <td className="p-3 text-right">
+                      <td className="p-3">
+                        <div className="flex items-center gap-1 font-mono">
+                          <button
+                            type="button"
+                            disabled={isBusy || p.stock <= 0}
+                            onClick={() => handleUpdatePracaStock(p, -1)}
+                            className="rounded border border-slate-200 px-1.5 py-0.5 font-bold hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
+                          >
+                            -1
+                          </button>
+                          <span className="px-1.5 font-bold">{p.stock}</span>
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => handleUpdatePracaStock(p, 5)}
+                            className="rounded border border-slate-200 px-1.5 py-0.5 font-bold hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
+                          >
+                            +5
+                          </button>
+                        </div>
+                      </td>
+                      <td className="p-3">
                         <button
                           type="button"
-                          onClick={() => {
-                            if (confirm(`Remover produto "${p.name}" da Praça?`)) {
-                              update((s) => ({
-                                products: s.products.filter((prod) => prod.id !== p.id),
-                              }));
-                            }
-                          }}
-                          className="rounded-lg border border-red-200 px-2 py-1 text-[11px] font-bold text-red-600 hover:bg-red-50"
+                          disabled={isBusy}
+                          onClick={() => handleTogglePracaProduct(p)}
+                          className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold cursor-pointer ${
+                            p.available !== false
+                              ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                              : "bg-slate-200 text-slate-700 hover:bg-slate-300"
+                          }`}
                         >
-                          Eliminar
+                          {p.available !== false ? "Ativo" : "Desativado"}
                         </button>
+                      </td>
+                      <td className="p-3 text-right">
+                        <div className="flex justify-end gap-1.5">
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => openEditPracaProductModal(p)}
+                            className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => handleDeletePracaProduct(p)}
+                            className="rounded-lg border border-red-200 px-2.5 py-1 text-[11px] font-bold text-red-600 hover:bg-red-50 cursor-pointer"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
                 })}
+                {filteredPracaProducts.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="py-10 text-center text-xs text-slate-500">
+                      Nenhum produto da Praça encontrado para os filtros aplicados.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
+
+          {/* Create / Edit Praca Product Modal */}
+          {editingPracaProd && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+              <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between border-b pb-3">
+                  <h4 className="text-lg font-black text-slate-900">
+                    {isCreatingPracaProd
+                      ? "Publicar Novo Produto na Praça"
+                      : `Editar Produto da Praça: ${editingPracaProd.name}`}
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setEditingPracaProd(null)}
+                    className="text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    <Icon name="X" className="size-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSavePracaProduct} className="mt-4 space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">Nome do Produto *</label>
+                      <input
+                        type="text"
+                        required
+                        value={editingPracaProd.name}
+                        onChange={(e) =>
+                          setEditingPracaProd({ ...editingPracaProd, name: e.target.value })
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">Loja / Vendedor</label>
+                      <input
+                        type="text"
+                        value={editingPracaProd.sellerName}
+                        onChange={(e) =>
+                          setEditingPracaProd({ ...editingPracaProd, sellerName: e.target.value })
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">Categoria da Praça</label>
+                      <select
+                        value={editingPracaProd.pracaCategoryId || ""}
+                        onChange={(e) => {
+                          const cat = store.pracaCategories.find((c) => c.id === e.target.value);
+                          setEditingPracaProd({
+                            ...editingPracaProd,
+                            pracaCategoryId: e.target.value || undefined,
+                            category: cat?.name || editingPracaProd.category,
+                          });
+                        }}
+                        className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm bg-white"
+                      >
+                        <option value="">Personalizada / Outra</option>
+                        {(store.pracaCategories || []).map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">Condição</label>
+                      <select
+                        value={editingPracaProd.condition || "NOVO"}
+                        onChange={(e) =>
+                          setEditingPracaProd({
+                            ...editingPracaProd,
+                            condition: e.target.value as "NOVO" | "USADO",
+                          })
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm bg-white"
+                      >
+                        <option value="NOVO">NOVO</option>
+                        <option value="USADO">USADO</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">SKU / Referência</label>
+                      <input
+                        type="text"
+                        value={editingPracaProd.sku || ""}
+                        onChange={(e) =>
+                          setEditingPracaProd({ ...editingPracaProd, sku: e.target.value })
+                        }
+                        placeholder="Ex.: PRC-001"
+                        className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">Preço (AOA) *</label>
+                      <input
+                        type="number"
+                        required
+                        min={1}
+                        value={editingPracaProd.priceAOA}
+                        onChange={(e) =>
+                          setEditingPracaProd({
+                            ...editingPracaProd,
+                            priceAOA: Number(e.target.value),
+                          })
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">Preço Promo (AOA)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={editingPracaProd.promotionalPriceAOA || ""}
+                        onChange={(e) =>
+                          setEditingPracaProd({
+                            ...editingPracaProd,
+                            promotionalPriceAOA: e.target.value
+                              ? Number(e.target.value)
+                              : undefined,
+                          })
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">Stock *</label>
+                      <input
+                        type="number"
+                        required
+                        min={0}
+                        value={editingPracaProd.stock}
+                        onChange={(e) =>
+                          setEditingPracaProd({
+                            ...editingPracaProd,
+                            stock: Number(e.target.value),
+                          })
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">Unidade</label>
+                      <input
+                        type="text"
+                        value={editingPracaProd.unit}
+                        onChange={(e) =>
+                          setEditingPracaProd({ ...editingPracaProd, unit: e.target.value })
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">Comissão Praça (%)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={50}
+                        value={editingPracaProd.platformCommissionRate ?? 10}
+                        onChange={(e) =>
+                          setEditingPracaProd({
+                            ...editingPracaProd,
+                            platformCommissionRate: Number(e.target.value),
+                          })
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-700">Comissão Afiliado (%)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={50}
+                        value={editingPracaProd.affiliateCommissionRate ?? 5}
+                        onChange={(e) =>
+                          setEditingPracaProd({
+                            ...editingPracaProd,
+                            affiliateCommissionRate: Number(e.target.value),
+                          })
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <ImageUploader
+                    label="Fotografia do Produto"
+                    value={editingPracaProd.image}
+                    onChange={(url) =>
+                      setEditingPracaProd((prev) => (prev ? { ...prev, image: url } : null))
+                    }
+                    fitMode={editingPracaProd.imageFit || "cover"}
+                    onFitModeChange={(fit) =>
+                      setEditingPracaProd((prev) => (prev ? { ...prev, imageFit: fit } : null))
+                    }
+                    assetCategory="products"
+                    assetTitle={editingPracaProd.name.trim() || undefined}
+                    onAssetUploaded={(asset) =>
+                      setPracaProdAssetRef(
+                        buildAssetReference(asset, asset.public_url || undefined)
+                      )
+                    }
+                  />
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700">Descrição</label>
+                    <textarea
+                      rows={2}
+                      value={editingPracaProd.description}
+                      onChange={(e) =>
+                        setEditingPracaProd({
+                          ...editingPracaProd,
+                          description: e.target.value,
+                        })
+                      }
+                      className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm"
+                    />
+                  </div>
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editingPracaProd.available !== false}
+                      onChange={(e) =>
+                        setEditingPracaProd({
+                          ...editingPracaProd,
+                          available: e.target.checked,
+                        })
+                      }
+                      className="size-4 accent-[#E6540F]"
+                    />
+                    <span className="text-xs font-bold text-slate-800">
+                      Produto ativo e visível para compra pública
+                    </span>
+                  </label>
+
+                  {pracaProdError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                      {pracaProdError}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-3 border-t">
+                    <button
+                      type="button"
+                      disabled={savingPracaProd}
+                      onClick={() => setEditingPracaProd(null)}
+                      className="rounded-xl border px-4 py-2 text-xs font-bold text-slate-600 cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={savingPracaProd}
+                      className="rounded-xl bg-[#E6540F] px-5 py-2 text-xs font-bold text-white disabled:opacity-60 cursor-pointer"
+                    >
+                      {savingPracaProd
+                        ? "A guardar no Supabase..."
+                        : isCreatingPracaProd
+                        ? "Publicar Produto"
+                        : "Guardar Alterações"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -792,6 +1703,10 @@ export function PracaAdminSection() {
                       value={newCatImage}
                       onChange={setNewCatImage}
                       assetCategory="general"
+                      assetTitle={newCatName.trim() || undefined}
+                      onAssetUploaded={(asset) =>
+                        setCatAssetRef(buildAssetReference(asset, asset.public_url || undefined))
+                      }
                     />
                   </div>
 
@@ -804,8 +1719,10 @@ export function PracaAdminSection() {
                   <div className="flex justify-end gap-2 pt-3 border-t">
                     <button
                       type="button"
+                      disabled={savingCategory}
                       onClick={() => {
                         setCatSaveError(null);
+                        setCatAssetRef(null);
                         setShowAddCategory(false);
                       }}
                       className="rounded-xl border px-4 py-2 text-xs font-bold text-slate-600"
@@ -814,9 +1731,10 @@ export function PracaAdminSection() {
                     </button>
                     <button
                       type="submit"
-                      className="rounded-xl bg-[#E6540F] px-5 py-2 text-xs font-bold text-white"
+                      disabled={savingCategory}
+                      className="rounded-xl bg-[#E6540F] px-5 py-2 text-xs font-bold text-white disabled:opacity-60"
                     >
-                      Criar Categoria
+                      {savingCategory ? "A gravar..." : "Criar Categoria"}
                     </button>
                   </div>
                 </form>
@@ -906,6 +1824,10 @@ export function PracaAdminSection() {
                         setEditingCategory((prev) => (prev ? { ...prev, image: url } : null))
                       }
                       assetCategory="general"
+                      assetTitle={editingCategory.name.trim() || undefined}
+                      onAssetUploaded={(asset) =>
+                        setCatAssetRef(buildAssetReference(asset, asset.public_url || undefined))
+                      }
                     />
                   </div>
 
@@ -918,8 +1840,10 @@ export function PracaAdminSection() {
                   <div className="flex justify-end gap-2 pt-3 border-t">
                     <button
                       type="button"
+                      disabled={savingCategory}
                       onClick={() => {
                         setCatSaveError(null);
+                        setCatAssetRef(null);
                         setEditingCategory(null);
                       }}
                       className="rounded-xl border px-4 py-2 text-xs font-bold text-slate-600"
@@ -928,9 +1852,10 @@ export function PracaAdminSection() {
                     </button>
                     <button
                       type="submit"
-                      className="rounded-xl bg-[#E6540F] px-5 py-2 text-xs font-bold text-white"
+                      disabled={savingCategory}
+                      className="rounded-xl bg-[#E6540F] px-5 py-2 text-xs font-bold text-white disabled:opacity-60"
                     >
-                      Guardar Alterações
+                      {savingCategory ? "A gravar..." : "Guardar Alterações"}
                     </button>
                   </div>
                 </form>
@@ -1242,12 +2167,14 @@ export function PracaAdminSection() {
             </label>
           </div>
 
-          <div className="pt-3 border-t">
+          <div className="pt-3 border-t flex flex-wrap items-center justify-between gap-3">
             <button
               type="submit"
-              className="rounded-xl bg-[#E6540F] px-6 py-3 text-xs font-bold text-white shadow-sm hover:bg-[#cf490a]"
+              disabled={savingSettings}
+              className="inline-flex items-center gap-2 rounded-xl bg-[#E6540F] px-6 py-3 text-xs font-bold text-white shadow-sm hover:bg-[#cf490a] disabled:opacity-60 cursor-pointer"
             >
-              Guardar e Aplicar Regras da Praça
+              {savingSettings && <Icon name="Loader2" className="size-4 animate-spin" />}
+              {savingSettings ? "A gravar no Supabase..." : "Guardar e Aplicar Regras da Praça"}
             </button>
           </div>
         </form>
