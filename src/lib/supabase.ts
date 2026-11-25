@@ -887,64 +887,284 @@ export async function signOutSupabase() {
   return await supabase.auth.signOut();
 }
 
+export function maskUuid(value?: string | null): string | null {
+  if (!value || typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (trimmed.length < 12) return "***";
+  return `${trimmed.slice(0, 8)}...${trimmed.slice(-4)}`;
+}
+
+export interface SupabaseProfileDiagnostics {
+  maskedUserId: string | null;
+  sessionPresent: boolean;
+  sessionUserMatches: boolean;
+  getUserConfirmed: boolean;
+  getUserError: string | null;
+  projectUrl: string;
+  queryStatus: number | null;
+  queryState: "idle" | "success" | "empty" | "error" | "no_session";
+  errorCode: string | null;
+  errorMessage: string | null;
+  errorDetails: string | null;
+  errorHint: string | null;
+  dbRole: string | null;
+  mappedRole: import("./store").UserRole | null;
+  finalState: "ready" | "missing" | "error" | "no_session";
+  checkedAt: string;
+}
+
 export interface SupabaseProfileFetchResult {
   ok: boolean;
   profile: any | null;
   error?: string | null;
+  status?: number | null;
+  errorCode?: string | null;
+  errorDetails?: string | null;
+  errorHint?: string | null;
+  diagnostics: SupabaseProfileDiagnostics;
 }
 
 /**
- * Fetch user profile from public.profiles with explicit error reporting.
- * Distinguishes query/RLS/network failure (ok: false) from missing row (ok: true, profile: null).
+ * Fetch user profile from public.profiles with explicit session/auth verification and error reporting.
+ * Uses the active Supabase client session (never localStorage UUIDs) and distinguishes HTTP/RLS errors
+ * from genuine missing rows. Never logs or exposes access tokens.
  */
 export async function getSupabaseProfileDetailed(
-  userId: string
+  expectedUserId?: string
 ): Promise<SupabaseProfileFetchResult> {
+  const checkedAt = new Date().toISOString();
+  const baseDiag: SupabaseProfileDiagnostics = {
+    maskedUserId: maskUuid(expectedUserId),
+    sessionPresent: false,
+    sessionUserMatches: false,
+    getUserConfirmed: false,
+    getUserError: null,
+    projectUrl: getSupabaseClientUrl(),
+    queryStatus: null,
+    queryState: "idle",
+    errorCode: null,
+    errorMessage: null,
+    errorDetails: null,
+    errorHint: null,
+    dbRole: null,
+    mappedRole: null,
+    finalState: "error",
+    checkedAt,
+  };
+
   if (!isSupabaseConfigured()) {
     return {
       ok: false,
       profile: null,
       error: "Supabase não está configurado.",
+      diagnostics: {
+        ...baseDiag,
+        errorMessage: "Supabase não está configurado.",
+        queryState: "error",
+        finalState: "error",
+      },
     };
   }
-  if (!userId) {
-    return {
-      ok: false,
-      profile: null,
-      error: "UUID do utilizador autenticado em falta.",
-    };
-  }
-  try {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id, email, full_name, phone, role, province, municipio, bairro, avatar_url")
-      .eq("id", userId)
-      .maybeSingle();
 
-    if (error) {
-      console.warn("Error fetching Supabase profile:", error.message);
+  try {
+    // 1. Verify active session & authenticated user on the SAME Supabase client instance
+    const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+    const activeSession = sessionData?.session ?? null;
+    const sessionUserId = activeSession?.user?.id ?? null;
+    const hasAccessToken = Boolean(activeSession?.access_token);
+
+    let authApiUserId: string | null = null;
+    let getUserError: string | null = null;
+    if (hasAccessToken) {
+      const { data: userData, error: userErr } = await supabase.auth.getUser();
+      authApiUserId = userData?.user?.id ?? null;
+      if (userErr) {
+        getUserError = `${userErr.status ? `HTTP ${userErr.status}: ` : ""}${userErr.message}`;
+      }
+    } else if (sessionErr) {
+      getUserError = sessionErr.message;
+    }
+
+    const authoritativeUserId = authApiUserId || sessionUserId;
+    const maskedId = maskUuid(authoritativeUserId || expectedUserId);
+    const sessionUserMatches = Boolean(
+      authoritativeUserId && (!expectedUserId || authoritativeUserId === expectedUserId)
+    );
+
+    if (!hasAccessToken || !authoritativeUserId) {
+      const noSessionMsg =
+        "Sessão autenticada ausente no cliente Supabase (sem access_token ativo para validar auth.uid()).";
+      console.warn("[AuthProfileDiagnostics] No active Supabase session", {
+        maskedUserId: maskedId,
+        projectUrl: baseDiag.projectUrl,
+        getUserError,
+      });
       return {
         ok: false,
         profile: null,
-        error: `Erro ao consultar public.profiles: ${error.message}`,
+        error: noSessionMsg,
+        diagnostics: {
+          ...baseDiag,
+          maskedUserId: maskedId,
+          sessionPresent: Boolean(activeSession),
+          sessionUserMatches: false,
+          getUserConfirmed: Boolean(authApiUserId),
+          getUserError,
+          queryState: "no_session",
+          errorMessage: noSessionMsg,
+          finalState: "no_session",
+        },
+      };
+    }
+
+    if (expectedUserId && authoritativeUserId !== expectedUserId) {
+      const mismatchMsg =
+        "Divergência entre o UUID da sessão autenticada e o identificador esperado.";
+      console.error("[AuthProfileDiagnostics] Auth UUID mismatch", {
+        expectedMasked: maskUuid(expectedUserId),
+        actualMasked: maskUuid(authoritativeUserId),
+      });
+      return {
+        ok: false,
+        profile: null,
+        error: mismatchMsg,
+        diagnostics: {
+          ...baseDiag,
+          maskedUserId: maskedId,
+          sessionPresent: true,
+          sessionUserMatches: false,
+          getUserConfirmed: Boolean(authApiUserId),
+          getUserError,
+          queryState: "error",
+          errorMessage: mismatchMsg,
+          finalState: "error",
+        },
+      };
+    }
+
+    // 2. Query public.profiles with .eq("id", authoritativeUserId).maybeSingle()
+    // Select "*" avoids HTTP 400 / 42703 failures if optional columns differ across deployments.
+    const { data, error, status } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", authoritativeUserId)
+      .maybeSingle();
+
+    if (error) {
+      const errCode = (error as any)?.code ?? null;
+      const errDetails = (error as any)?.details ?? null;
+      const errHint = (error as any)?.hint ?? null;
+      console.error("[AuthProfileDiagnostics] Error querying public.profiles", {
+        maskedUserId: maskedId,
+        status,
+        code: errCode,
+        message: error.message,
+        details: errDetails,
+        hint: errHint,
+      });
+      return {
+        ok: false,
+        profile: null,
+        status,
+        errorCode: errCode,
+        errorDetails: errDetails,
+        errorHint: errHint,
+        error: `Erro ao consultar public.profiles${errCode ? ` [${errCode}]` : ""}: ${error.message}`,
+        diagnostics: {
+          ...baseDiag,
+          maskedUserId: maskedId,
+          sessionPresent: true,
+          sessionUserMatches,
+          getUserConfirmed: Boolean(authApiUserId),
+          getUserError,
+          queryStatus: status ?? null,
+          queryState: "error",
+          errorCode: errCode,
+          errorMessage: error.message,
+          errorDetails: errDetails,
+          errorHint: errHint,
+          finalState: "error",
+        },
       };
     }
 
     if (!data) {
+      const emptyMsg =
+        "Perfil não encontrado em public.profiles para o utilizador autenticado (auth.uid()).";
+      console.warn("[AuthProfileDiagnostics] Empty result from public.profiles", {
+        maskedUserId: maskedId,
+        status,
+        getUserConfirmed: Boolean(authApiUserId),
+      });
       return {
         ok: true,
         profile: null,
-        error: "Perfil não encontrado em public.profiles para o utilizador autenticado.",
+        status,
+        error: emptyMsg,
+        diagnostics: {
+          ...baseDiag,
+          maskedUserId: maskedId,
+          sessionPresent: true,
+          sessionUserMatches,
+          getUserConfirmed: Boolean(authApiUserId),
+          getUserError,
+          queryStatus: status ?? null,
+          queryState: "empty",
+          errorMessage: emptyMsg,
+          finalState: "missing",
+        },
       };
     }
 
-    return { ok: true, profile: data, error: null };
+    const mappedRole = mapDbRoleToUserRoleStrict(data.role);
+    const roleErrMsg = !mappedRole
+      ? `Papel '${String(data.role ?? "")}' em public.profiles não é reconhecido.`
+      : null;
+
+    console.info("[AuthProfileDiagnostics] Profile resolved", {
+      maskedUserId: maskedId,
+      status,
+      dbRole: data.role ?? null,
+      mappedRole,
+      getUserConfirmed: Boolean(authApiUserId),
+    });
+
+    return {
+      ok: true,
+      profile: data,
+      status,
+      error: roleErrMsg,
+      diagnostics: {
+        ...baseDiag,
+        maskedUserId: maskedId,
+        sessionPresent: true,
+        sessionUserMatches,
+        getUserConfirmed: Boolean(authApiUserId),
+        getUserError,
+        queryStatus: status ?? null,
+        queryState: "success",
+        errorMessage: roleErrMsg,
+        dbRole: data.role ?? null,
+        mappedRole,
+        finalState: mappedRole ? "ready" : "error",
+      },
+    };
   } catch (err: any) {
-    console.warn("Exception fetching Supabase profile:", err);
+    const errMsg = err?.message || "Exceção de rede ao consultar public.profiles.";
+    console.error("[AuthProfileDiagnostics] Exception querying public.profiles", {
+      maskedUserId: maskUuid(expectedUserId),
+      message: errMsg,
+    });
     return {
       ok: false,
       profile: null,
-      error: err?.message || "Exceção de rede ao consultar public.profiles.",
+      error: errMsg,
+      diagnostics: {
+        ...baseDiag,
+        queryState: "error",
+        errorMessage: errMsg,
+        finalState: "error",
+      },
     };
   }
 }

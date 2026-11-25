@@ -9,6 +9,8 @@ import {
 } from "../lib/store";
 import { LOCATIONS, ANGOLA_PROVINCES } from "../lib/data";
 import { useAuth, getDashboardRouteForRole } from "../lib/AuthContext";
+import type { SupabaseProfileDiagnostics } from "../lib/supabase";
+import { ProfileDiagnosticsBox } from "../ui/ProfileDiagnosticsBox";
 
 type AuthTab = "register" | "login";
 
@@ -26,11 +28,13 @@ export function Auth({
     session,
     profileStatus,
     profileError,
+    profileDiagnostics,
     refreshProfile,
     signIn,
     signUp,
     signOut,
   } = useAuth();
+  const [lastSignInDiag, setLastSignInDiag] = useState<SupabaseProfileDiagnostics | null>(null);
   const hasPartialOrInvalidSupabaseConfig =
     !isConfigured &&
     (configDiagnostics.urlPresent || configDiagnostics.anonKeyPresent);
@@ -244,8 +248,15 @@ export function Auth({
         return;
       }
       try {
-        const { error, user, session, profile, profileError: signInProfileError } =
-          await signIn(ident, pass);
+        const {
+          error,
+          user,
+          session,
+          profile,
+          profileError: signInProfileError,
+          profileDiagnostics: signInDiag,
+        } = await signIn(ident, pass);
+        setLastSignInDiag(signInDiag ?? null);
         if (error) {
           setLoginError(formatSupabaseAuthError(error));
           setLoginLoading(false);
@@ -593,40 +604,44 @@ export function Auth({
     <div className="mx-auto max-w-4xl px-4 py-10 sm:py-16 @3xl:px-8">
       {/* Aviso explícito se houver sessão Supabase sem perfil válido em public.profiles */}
       {isConfigured && session && !store.currentUser && (profileStatus === "error" || profileStatus === "missing") && (
-        <div className="mb-8 rounded-2xl border-2 border-red-300 bg-red-50 p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <Icon name="ShieldAlert" className="size-6 shrink-0 text-red-600 mt-0.5" />
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-red-700">
-                Erro de Validação do Perfil
-              </p>
-              <p className="text-sm font-semibold text-red-900 mt-0.5">
-                {profileError || "Sessão autenticada sem perfil válido em public.profiles."}
-              </p>
+        <div className="mb-8 rounded-2xl border-2 border-red-300 bg-red-50 p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <Icon name="ShieldAlert" className="size-6 shrink-0 text-red-600 mt-0.5" />
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-red-700">
+                  Erro de Validação do Perfil
+                </p>
+                <p className="text-sm font-semibold text-red-900 mt-0.5">
+                  {profileError || "Sessão autenticada sem perfil válido em public.profiles."}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Btn
+                kind="action"
+                className="text-xs min-h-9 px-3"
+                onClick={async () => {
+                  const outcome = await refreshProfile();
+                  setLastSignInDiag(outcome?.diagnostics ?? null);
+                  const target = getDashboardRouteForRole(outcome?.profile?.role);
+                  if (target) go(target);
+                }}
+              >
+                Tentar Novamente
+              </Btn>
+              <button
+                type="button"
+                onClick={async () => {
+                  await signOut();
+                }}
+                className="px-3 py-2 text-xs font-bold text-red-700 hover:underline cursor-pointer"
+              >
+                Sair
+              </button>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Btn
-              kind="action"
-              className="text-xs min-h-9 px-3"
-              onClick={async () => {
-                const outcome = await refreshProfile();
-                const target = getDashboardRouteForRole(outcome?.profile?.role);
-                if (target) go(target);
-              }}
-            >
-              Tentar Novamente
-            </Btn>
-            <button
-              type="button"
-              onClick={async () => {
-                await signOut();
-              }}
-              className="px-3 py-2 text-xs font-bold text-red-700 hover:underline cursor-pointer"
-            >
-              Sair
-            </button>
-          </div>
+          <ProfileDiagnosticsBox diagnostics={profileDiagnostics || lastSignInDiag} />
         </div>
       )}
 
@@ -978,17 +993,20 @@ export function Auth({
 
           {/* CENTRAL DE AMBIENTES E ACESSO RÁPIDO (apenas quando Supabase não está configurado) */}
           {isConfigured ? (
-            <div className="mt-8 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 text-xs text-emerald-900 flex items-start gap-2.5">
-              <Icon name="ShieldCheck" className="size-4 shrink-0 text-emerald-600 mt-0.5" />
-              <div>
-                <p className="font-bold">Autenticação Real Ativa (Supabase Auth)</p>
-                <p className="text-emerald-800 mt-0.5">
-                  O acesso aos perfis operacionais e administrativos é validado exclusivamente por email, palavra-passe e papel atribuído na base de dados.
-                </p>
-                <p className="text-[11px] font-mono text-emerald-700 mt-1">
-                  Endpoint base: {configDiagnostics.resolvedUrl}
-                </p>
+            <div className="mt-8 space-y-3">
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 text-xs text-emerald-900 flex items-start gap-2.5">
+                <Icon name="ShieldCheck" className="size-4 shrink-0 text-emerald-600 mt-0.5" />
+                <div>
+                  <p className="font-bold">Autenticação Real Ativa (Supabase Auth)</p>
+                  <p className="text-emerald-800 mt-0.5">
+                    O acesso aos perfis operacionais e administrativos é validado exclusivamente por email, palavra-passe e papel atribuído na base de dados.
+                  </p>
+                  <p className="text-[11px] font-mono text-emerald-700 mt-1">
+                    Endpoint base: {configDiagnostics.resolvedUrl}
+                  </p>
+                </div>
               </div>
+              <ProfileDiagnosticsBox diagnostics={profileDiagnostics || lastSignInDiag} />
             </div>
           ) : hasPartialOrInvalidSupabaseConfig ? (
             <div className="mt-8 rounded-2xl border border-red-200 bg-red-50/80 p-4 text-xs text-red-900 flex items-start gap-2.5">

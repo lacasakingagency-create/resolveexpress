@@ -4,6 +4,7 @@ import {
   supabase,
   getSupabaseConfigDiagnostics,
   type SupabaseConfigDiagnostics,
+  type SupabaseProfileDiagnostics,
   signInWithSupabase,
   signUpWithSupabase,
   signOutSupabase,
@@ -49,6 +50,7 @@ interface SyncProfileOutcome {
   profile: UserAccount | null;
   status: ProfileLoadStatus;
   error: string | null;
+  diagnostics: SupabaseProfileDiagnostics | null;
 }
 
 interface AuthContextType {
@@ -57,6 +59,7 @@ interface AuthContextType {
   profile: UserAccount | null;
   profileStatus: ProfileLoadStatus;
   profileError: string | null;
+  profileDiagnostics: SupabaseProfileDiagnostics | null;
   loading: boolean;
   isConfigured: boolean;
   configDiagnostics: SupabaseConfigDiagnostics;
@@ -69,6 +72,7 @@ interface AuthContextType {
     session?: Session | null;
     profile?: UserAccount | null;
     profileError?: string | null;
+    profileDiagnostics?: SupabaseProfileDiagnostics | null;
   }>;
   signUp: (params: {
     email: string;
@@ -95,9 +99,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [profileStatus, setProfileStatus] = useState<ProfileLoadStatus>("idle");
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileDiagnostics, setProfileDiagnostics] = useState<SupabaseProfileDiagnostics | null>(null);
 
+  const authEpochRef = useRef(0);
   const inFlightSyncRef = useRef<{
     userId: string;
+    epoch: number;
     promise: Promise<SyncProfileOutcome>;
   } | null>(null);
   const currentUserRef = useRef<UserAccount | null>(store.currentUser);
@@ -105,7 +112,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Authoritative profile synchronization from public.profiles via auth.uid().
   // Never fabricates or downgrades an account to CUSTOMER on transient error or missing row.
-  const syncProfile = async (currentUser: User): Promise<SyncProfileOutcome> => {
+  const syncProfile = async (
+    currentUser: User,
+    options?: { forceRefresh?: boolean }
+  ): Promise<SyncProfileOutcome> => {
     if (!currentUser?.id) {
       setProfileStatus("error");
       setProfileError("Sessão sem identificador de utilizador válido.");
@@ -113,23 +123,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         profile: null,
         status: "error",
         error: "Sessão sem identificador de utilizador válido.",
+        diagnostics: null,
       };
     }
 
-    if (inFlightSyncRef.current?.userId === currentUser.id) {
+    const syncEpoch = authEpochRef.current;
+
+    if (
+      !options?.forceRefresh &&
+      inFlightSyncRef.current?.userId === currentUser.id &&
+      inFlightSyncRef.current?.epoch === syncEpoch
+    ) {
       return inFlightSyncRef.current.promise;
     }
 
     const runSync = (async (): Promise<SyncProfileOutcome> => {
-      setProfileStatus("loading");
+      // Avoid flashing loading spinner over an already-verified portal on background refresh
+      if (currentUserRef.current?.id !== currentUser.id || options?.forceRefresh) {
+        setProfileStatus("loading");
+      }
       setProfileError(null);
 
       let result = await getSupabaseProfileDetailed(currentUser.id);
       // One short retry to guard against initial post-login token commit timing
-      if (!result.ok) {
+      if (!result.ok && syncEpoch === authEpochRef.current) {
         await new Promise((r) => setTimeout(r, 150));
-        result = await getSupabaseProfileDetailed(currentUser.id);
+        if (syncEpoch === authEpochRef.current) {
+          result = await getSupabaseProfileDetailed(currentUser.id);
+        }
       }
+
+      if (syncEpoch !== authEpochRef.current) {
+        return {
+          profile: currentUserRef.current,
+          status: currentUserRef.current ? "ready" : "idle",
+          error: null,
+          diagnostics: result.diagnostics,
+        };
+      }
+
+      setProfileDiagnostics(result.diagnostics);
 
       if (!result.ok) {
         const errMsg =
@@ -139,21 +172,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Preserve verified profile (e.g. SUPER_ADMIN) during transient background refresh errors
           setProfileStatus("ready");
           setProfileError(null);
-          return { profile: existingVerified, status: "ready", error: null };
+          return {
+            profile: existingVerified,
+            status: "ready",
+            error: null,
+            diagnostics: result.diagnostics,
+          };
         }
         setStore(() => ({ currentUser: null }));
         setProfileStatus("error");
         setProfileError(errMsg);
-        return { profile: null, status: "error", error: errMsg };
+        return {
+          profile: null,
+          status: "error",
+          error: errMsg,
+          diagnostics: result.diagnostics,
+        };
       }
 
       if (!result.profile) {
         const missingMsg =
+          result.error ||
           "Esta conta foi autenticada, mas não existe um registo válido na tabela public.profiles.";
         setStore(() => ({ currentUser: null }));
         setProfileStatus("missing");
         setProfileError(missingMsg);
-        return { profile: null, status: "missing", error: missingMsg };
+        return {
+          profile: null,
+          status: "missing",
+          error: missingMsg,
+          diagnostics: result.diagnostics,
+        };
       }
 
       const mappedRole = mapDbRoleToUserRoleStrict(result.profile.role);
@@ -164,7 +213,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setStore(() => ({ currentUser: null }));
         setProfileStatus("error");
         setProfileError(invalidRoleMsg);
-        return { profile: null, status: "error", error: invalidRoleMsg };
+        return {
+          profile: null,
+          status: "error",
+          error: invalidRoleMsg,
+          diagnostics: result.diagnostics,
+        };
       }
 
       const account: UserAccount = {
@@ -187,10 +241,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setStore(() => ({ currentUser: account }));
       setProfileStatus("ready");
       setProfileError(null);
-      return { profile: account, status: "ready", error: null };
+      return {
+        profile: account,
+        status: "ready",
+        error: null,
+        diagnostics: result.diagnostics,
+      };
     })();
 
-    inFlightSyncRef.current = { userId: currentUser.id, promise: runSync };
+    inFlightSyncRef.current = { userId: currentUser.id, epoch: syncEpoch, promise: runSync };
     try {
       return await runSync;
     } finally {
@@ -209,11 +268,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    const mountEpoch = authEpochRef.current;
+
     // 1. Initial Session Check
     supabase.auth
       .getSession()
       .then(async ({ data: { session: initialSession }, error }) => {
-        if (!mounted) return;
+        if (!mounted || mountEpoch !== authEpochRef.current) return;
         if (error) {
           console.warn("Supabase getSession warning:", error.message);
         }
@@ -228,6 +289,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setStore(() => ({ currentUser: null }));
           setProfileStatus("idle");
           setProfileError(null);
+          setProfileDiagnostics(null);
         }
 
         if (mounted) {
@@ -240,13 +302,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, currentSession) => {
       if (!mounted) return;
-      setSession(currentSession);
-      setUser(currentSession?.user ?? null);
-
       if (event === "SIGNED_OUT") {
+        authEpochRef.current += 1;
+        setSession(null);
+        setUser(null);
         setStore(() => ({ currentUser: null }));
         setProfileStatus("idle");
         setProfileError(null);
+        setProfileDiagnostics(null);
         setLoading(false);
         setTimeout(() => {
           refreshPlatformAssetsSnapshot();
@@ -254,10 +317,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      setSession(currentSession);
+      setUser(currentSession?.user ?? null);
+
       if (
         currentSession?.user &&
         (event === "SIGNED_IN" || event === "USER_UPDATED" || event === "TOKEN_REFRESHED")
       ) {
+        if (event === "SIGNED_IN") {
+          authEpochRef.current += 1;
+        }
         const targetUser = currentSession.user;
         setTimeout(async () => {
           if (!mounted) return;
@@ -278,9 +347,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = async (email: string, pass: string) => {
+    authEpochRef.current += 1;
     setLoading(true);
     setProfileStatus("loading");
     setProfileError(null);
+    setProfileDiagnostics(null);
     try {
       const { data, error } = await signInWithSupabase(email, pass);
       if (error || !data?.user || !data?.session) {
@@ -291,12 +362,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           session: data?.session ?? null,
           profile: null,
           profileError: null,
+          profileDiagnostics: null,
         };
+      }
+
+      // Ensure the Supabase client session is committed before querying public.profiles
+      const { data: activeSessData } = await supabase.auth.getSession();
+      if (!activeSessData?.session?.access_token) {
+        await supabase.auth.setSession({
+          access_token: data.session.access_token,
+          refresh_token: data.session.refresh_token,
+        });
       }
 
       setUser(data.user);
       setSession(data.session);
-      const outcome = await syncProfile(data.user);
+      const outcome = await syncProfile(data.user, { forceRefresh: true });
       refreshPlatformAssetsSnapshot();
       refreshPlatformSettingsSnapshot();
 
@@ -306,6 +387,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         session: data.session,
         profile: outcome.profile,
         profileError: outcome.error,
+        profileDiagnostics: outcome.diagnostics,
       };
     } finally {
       setLoading(false);
@@ -323,6 +405,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     bairro?: string;
     address?: string;
   }) => {
+    authEpochRef.current += 1;
     setLoading(true);
     try {
       // Security: Public self-registration is strictly 'cliente'. Administrative roles require database elevation.
@@ -341,7 +424,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!error && data?.user && data?.session) {
         setUser(data.user);
         setSession(data.session);
-        await syncProfile(data.user);
+        await syncProfile(data.user, { forceRefresh: true });
       }
       return { error, user: data?.user };
     } finally {
@@ -350,6 +433,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async () => {
+    authEpochRef.current += 1;
     setLoading(true);
     try {
       await signOutSupabase();
@@ -358,6 +442,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setStore(() => ({ currentUser: null }));
       setProfileStatus("idle");
       setProfileError(null);
+      setProfileDiagnostics(null);
     } finally {
       setLoading(false);
     }
@@ -365,7 +450,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshProfile = async (): Promise<SyncProfileOutcome | null> => {
     if (!user) return null;
-    return await syncProfile(user);
+    return await syncProfile(user, { forceRefresh: true });
   };
 
   const hasRole = (allowedRoles: UserRole[]): boolean => {
@@ -382,6 +467,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       profile: store.currentUser,
       profileStatus,
       profileError,
+      profileDiagnostics,
       loading,
       isConfigured: configDiagnostics.configured,
       configDiagnostics,
@@ -391,7 +477,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshProfile,
       hasRole,
     }),
-    [session, user, store.currentUser, profileStatus, profileError, loading]
+    [session, user, store.currentUser, profileStatus, profileError, profileDiagnostics, loading]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

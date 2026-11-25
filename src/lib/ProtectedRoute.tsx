@@ -2,6 +2,7 @@ import React from "react";
 import { useStore, type UserRole } from "./store";
 import { useAuth, getDashboardRouteForRole } from "./AuthContext";
 import { Icon, Btn, go } from "../ui/kit";
+import { ProfileDiagnosticsBox } from "../ui/ProfileDiagnosticsBox";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -23,6 +24,7 @@ export function ProtectedRoute({
     session,
     profileStatus,
     profileError,
+    profileDiagnostics,
     refreshProfile,
     signOut,
   } = useAuth();
@@ -54,6 +56,7 @@ export function ProtectedRoute({
             {profileError ||
               "A sessão está autenticada, mas não foi possível confirmar o perfil em public.profiles."}
           </p>
+          <ProfileDiagnosticsBox diagnostics={profileDiagnostics} />
           <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
             <Btn
               kind="action"
