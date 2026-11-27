@@ -1096,11 +1096,42 @@ export async function signUpWithSupabase(params: {
 }
 
 /**
- * Sign out from Supabase
+ * Sign out from Supabase and ensure all persisted auth tokens are purged locally
+ * so reloading or revisiting the app never auto-logs in without credentials.
  */
 export async function signOutSupabase() {
-  if (!isSupabaseConfigured()) return { error: null };
-  return await supabase.auth.signOut();
+  let signOutErr: any = null;
+  if (isSupabaseConfigured()) {
+    try {
+      const { error } = await supabase.auth.signOut({ scope: "global" });
+      if (error) signOutErr = error;
+    } catch (err) {
+      signOutErr = err;
+    }
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch {
+      // Ignore secondary local clear errors
+    }
+  }
+
+  if (typeof window !== "undefined") {
+    for (const storage of [window.localStorage, window.sessionStorage]) {
+      if (!storage) continue;
+      try {
+        for (let i = storage.length - 1; i >= 0; i--) {
+          const key = storage.key(i);
+          if (key && (/^sb-.*-auth-token/i.test(key) || /^supabase\.auth\./i.test(key))) {
+            storage.removeItem(key);
+          }
+        }
+      } catch {
+        // Ignore storage errors
+      }
+    }
+  }
+
+  return { error: signOutErr };
 }
 
 export function maskUuid(value?: string | null): string | null {

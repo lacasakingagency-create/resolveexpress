@@ -331,6 +331,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (initialSession?.user) {
           await syncProfile(initialSession.user);
+          if (!mounted || mountEpoch !== authEpochRef.current) return;
           refreshPlatformAssetsSnapshot();
           refreshPlatformSettingsSnapshot();
         } else {
@@ -340,7 +341,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setProfileDiagnostics(null);
         }
 
-        if (mounted) {
+        if (mounted && mountEpoch === authEpochRef.current) {
           setLoading(false);
         }
       });
@@ -352,6 +353,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!mounted) return;
       if (event === "SIGNED_OUT") {
         authEpochRef.current += 1;
+        inFlightSyncRef.current = null;
         setSession(null);
         setUser(null);
         setStore(() => ({ currentUser: null }));
@@ -365,9 +367,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      setSession(currentSession);
-      setUser(currentSession?.user ?? null);
-
       if (
         currentSession?.user &&
         (event === "SIGNED_IN" || event === "USER_UPDATED" || event === "TOKEN_REFRESHED")
@@ -375,16 +374,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (event === "SIGNED_IN") {
           authEpochRef.current += 1;
         }
+        const callbackEpoch = authEpochRef.current;
         const targetUser = currentSession.user;
+        setSession(currentSession);
+        setUser(targetUser);
         setTimeout(async () => {
-          if (!mounted) return;
+          if (!mounted || callbackEpoch !== authEpochRef.current) return;
           await syncProfile(targetUser);
+          if (!mounted || callbackEpoch !== authEpochRef.current) return;
           if (event === "SIGNED_IN") {
             refreshPlatformAssetsSnapshot();
             refreshPlatformSettingsSnapshot();
           }
           if (mounted) setLoading(false);
         }, 0);
+      } else {
+        setSession(currentSession);
+        setUser(currentSession?.user ?? null);
       }
     });
 
@@ -586,16 +592,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     authEpochRef.current += 1;
+    inFlightSyncRef.current = null;
     setLoading(true);
+    setSession(null);
+    setUser(null);
+    setStore(() => ({ currentUser: null }));
+    setProfileStatus("idle");
+    setProfileError(null);
+    setProfileDiagnostics(null);
     try {
       await signOutSupabase();
+    } finally {
       setSession(null);
       setUser(null);
       setStore(() => ({ currentUser: null }));
-      setProfileStatus("idle");
-      setProfileError(null);
-      setProfileDiagnostics(null);
-    } finally {
       setLoading(false);
     }
   };

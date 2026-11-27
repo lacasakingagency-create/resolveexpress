@@ -3,6 +3,7 @@ import { Icon, go, Btn } from "./kit";
 import { LOCATIONS, LEGAL_DOCS } from "../lib/data";
 import { useStore, getSupportContactInfo, type CurrencyCode, type LanguageCode } from "../lib/store";
 import { useI18n } from "../lib/i18n";
+import { useAuth } from "../lib/AuthContext";
 
 export const Wordmark = ({ light }: { light?: boolean }) => {
   const [store] = useStore();
@@ -87,7 +88,8 @@ function MenuItem({
 }
 
 export function ProfileMenu({ onNav }: { onNav?: (path: string) => void }) {
-  const [store, setStore] = useStore();
+  const [store] = useStore();
+  const { signOut } = useAuth();
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -112,10 +114,11 @@ export function ProfileMenu({ onNav }: { onNav?: (path: string) => void }) {
     else go(path);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     setOpen(false);
-    setStore(() => ({ currentUser: null }));
-    go("/");
+    await signOut();
+    if (onNav) onNav("/entrar");
+    else go("/entrar");
   };
 
   useEffect(() => {
@@ -419,6 +422,7 @@ export function Header({
 }) {
   const [open, setOpen] = useState(false);
   const [store, setStore] = useStore();
+  const { signOut } = useAuth();
   const { t } = useI18n();
   const isAdmin = store.currentUser?.role === "ADMIN" || store.currentUser?.role === "SUPER_ADMIN";
   const support = getSupportContactInfo(store);
@@ -639,11 +643,12 @@ export function Header({
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    setStore(() => ({ currentUser: null }));
-                    nav("/");
+                  onClick={async () => {
+                    setOpen(false);
+                    await signOut();
+                    nav("/entrar");
                   }}
-                  className="text-xs font-bold text-red-600 hover:underline px-2 py-1"
+                  className="text-xs font-bold text-red-600 hover:underline px-2 py-1 cursor-pointer"
                 >
                   {t("nav_logout")}
                 </button>

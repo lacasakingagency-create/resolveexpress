@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon, go, Btn, Field, inputCls } from "../ui/kit";
 import {
   useStore,
@@ -108,6 +108,14 @@ export function Auth({
   const [loginPass, setLoginPass] = useState("");
   const [loginError, setLoginError] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
+
+  // Clear credential fields whenever session/user is logged out
+  useEffect(() => {
+    if (!session && !store.currentUser) {
+      setLoginIdent("");
+      setLoginPass("");
+    }
+  }, [session, store.currentUser]);
 
   // Submissão do Cadastro de Cliente
   const handleClientRegister = async (e: React.FormEvent) => {
