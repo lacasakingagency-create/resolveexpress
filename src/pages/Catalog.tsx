@@ -10,6 +10,7 @@ import {
 } from "../lib/store";
 import { Service, Category } from "../lib/data";
 import { CategoryCard, ServiceCard } from "./Home";
+import { useI18n } from "../lib/i18n";
 
 const norm = (s: string) =>
   s
@@ -19,6 +20,7 @@ const norm = (s: string) =>
 
 export function Catalog({ q }: { q?: string | null }) {
   const [store] = useStore();
+  const { t } = useI18n();
   const [search, setSearch] = useState(q || "");
   const [selectedCatId, setSelectedCatId] = useState<string>("all");
 
@@ -76,14 +78,13 @@ export function Catalog({ q }: { q?: string | null }) {
         )}
         <div className="relative z-10 mx-auto max-w-6xl space-y-4">
           <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3.5 py-1 text-xs font-semibold backdrop-blur-xs text-action">
-            <Icon name="Sparkles" className="size-3.5" /> Catálogo de Serviços Profissionais
+            <Icon name="Sparkles" className="size-3.5" /> {t("cat_badge")}
           </div>
           <h1 className="font-display text-3xl sm:text-5xl font-black tracking-tight">
-            Serviços Especializados ao Domicílio
+            {t("cat_title")}
           </h1>
           <p className="max-w-2xl text-white/80 text-sm sm:text-base">
-            Equipas verificadas para limpezas, reparações, canalização, eletricidade,
-            apoio escolar e muito mais no Huambo e províncias de Angola.
+            {t("cat_subtitle")}
           </p>
 
           {/* Search Bar */}
@@ -97,7 +98,7 @@ export function Catalog({ q }: { q?: string | null }) {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Pesquisar serviço (ex.: canalizador, ar condicionado, explicação, faxina)..."
+                placeholder={t("cat_search_placeholder")}
                 className="w-full rounded-[var(--radius)] bg-paper text-foreground pl-12 pr-10 py-3 text-sm shadow-lg border border-border focus:outline-hidden focus:ring-2 focus:ring-action"
               />
               {search && (
@@ -119,10 +120,10 @@ export function Catalog({ q }: { q?: string | null }) {
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-              Departamentos & Categorias
+              {t("cat_departments")}
             </span>
             <span className="text-xs text-muted-foreground">
-              {allServices.length} serviços disponíveis
+              {allServices.length} {t("cat_services_available")}
             </span>
           </div>
 
@@ -136,7 +137,7 @@ export function Catalog({ q }: { q?: string | null }) {
                   : "bg-paper border border-border text-primary hover:border-action/40"
               }`}
             >
-              <Icon name="Grid" className="size-3.5" /> Todos os Departamentos
+              <Icon name="Grid" className="size-3.5" /> {t("cat_all_departments")}
             </button>
             {categories.map((c) => (
               <button
@@ -173,15 +174,15 @@ export function Catalog({ q }: { q?: string | null }) {
                 </span>
                 <div>
                   <h2 className="font-display text-lg font-black text-primary">
-                    ⭐ Serviços em Destaque
+                    ⭐ {t("cat_featured_title")}
                   </h2>
                   <p className="text-xs text-muted-foreground">
-                    Os serviços mais requisitados pelos clientes com alta taxa de aprovação
+                    {t("cat_featured_sub")}
                   </p>
                 </div>
               </div>
               <span className="rounded-full bg-action/15 text-action text-xs font-bold px-2.5 py-0.5">
-                Populares
+                {t("cat_popular")}
               </span>
             </div>
 
@@ -201,9 +202,9 @@ export function Catalog({ q }: { q?: string | null }) {
               <h2 className="font-display text-xl font-bold text-primary">
                 {selectedCatId !== "all"
                   ? categories.find((c) => c.id === selectedCatId)?.name
-                  : `Resultados da pesquisa`}
+                  : t("cat_search_results")}
                 <span className="text-sm font-normal text-muted-foreground ml-2">
-                  ({filteredServices.length} serviços encontrados)
+                  ({filteredServices.length} {t("cat_services_found")})
                 </span>
               </h2>
               {selectedCatId !== "all" && (
@@ -212,7 +213,7 @@ export function Catalog({ q }: { q?: string | null }) {
                   onClick={() => setSelectedCatId("all")}
                   className="text-xs text-action hover:underline font-bold"
                 >
-                  Ver todos
+                  {t("section_cats_view_all")}
                 </button>
               )}
             </div>
@@ -226,8 +227,8 @@ export function Catalog({ q }: { q?: string | null }) {
             ) : (
               <Empty
                 icon="SearchX"
-                title="Nenhum serviço encontrado"
-                text="Tente alterar os termos da pesquisa ou selecione outro departamento."
+                title={t("cat_empty_title")}
+                text={t("cat_empty_text")}
               >
                 <Btn
                   kind="ghost"
@@ -236,7 +237,7 @@ export function Catalog({ q }: { q?: string | null }) {
                     setSelectedCatId("all");
                   }}
                 >
-                  Limpar filtros
+                  {t("cat_clear_filters")}
                 </Btn>
               </Empty>
             )}
@@ -261,12 +262,12 @@ export function Catalog({ q }: { q?: string | null }) {
                         <p className="text-xs text-muted-foreground">{c.short}</p>
                       </div>
                     </div>
-                    <button
+                      <button
                       type="button"
                       onClick={() => setSelectedCatId(c.id)}
                       className="text-xs font-bold text-action hover:underline flex items-center gap-1 self-start sm:self-auto"
                     >
-                      Ver todos ({c.services.length}) <Icon name="ArrowRight" className="size-3" />
+                      {t("section_cats_view_all")} ({c.services.length}) <Icon name="ArrowRight" className="size-3" />
                     </button>
                   </div>
 
@@ -288,16 +289,17 @@ export function Catalog({ q }: { q?: string | null }) {
 
 export function CategoryPage({ id }: { id: string }) {
   const [store] = useStore();
+  const { t } = useI18n();
   const cat = findStoreCategory(store, id);
 
   if (!cat || !catActive(store, cat)) {
     return (
-      <Section title="Departamento indisponível">
+      <Section title={t("cat_unavailable_title")}>
         <Empty
-          title="Este departamento não está ativo"
-          text="Pode estar temporariamente desativado."
+          title={t("cat_unavailable_sub")}
+          text={t("cat_unavailable_text")}
         >
-          <Btn onClick={() => go("/servicos")}>Ver serviços</Btn>
+          <Btn onClick={() => go("/servicos")}>{t("cat_view_services")}</Btn>
         </Empty>
       </Section>
     );
@@ -312,7 +314,7 @@ export function CategoryPage({ id }: { id: string }) {
             onClick={() => go("/servicos")}
             className="flex w-fit items-center gap-1 text-sm text-white/70 hover:text-white"
           >
-            <Icon name="ArrowLeft" className="size-4" /> Todos os serviços
+            <Icon name="ArrowLeft" className="size-4" /> {t("cat_all_services_back")}
           </button>
           <div className="flex items-center gap-4">
             <span className="grid size-14 place-items-center rounded-[12px] bg-action text-white">
@@ -327,7 +329,7 @@ export function CategoryPage({ id }: { id: string }) {
           </div>
         </div>
       </div>
-      <Section title={`${cat.services.length} serviços disponíveis`}>
+      <Section title={`${cat.services.length} ${t("cat_services_available")}`}>
         <div className="grid gap-4 @3xl:grid-cols-2 @5xl:grid-cols-3">
           {cat.services.map((s) => (
             <ServiceCard key={s.id} svc={s} />

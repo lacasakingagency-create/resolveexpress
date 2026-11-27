@@ -1,23 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { Icon, go, Btn } from "./kit";
 import { LOCATIONS, LEGAL_DOCS } from "../lib/data";
-import { useStore, type CurrencyCode, type LanguageCode } from "../lib/store";
+import { useStore, getSupportContactInfo, type CurrencyCode, type LanguageCode } from "../lib/store";
 import { useI18n } from "../lib/i18n";
-
-const NAV_ITEMS: [string, string][] = [
-  ["Início", "/"],
-  ["Serviços", "/servicos"],
-  ["PRAÇA", "/praca"],
-  ["Importação", "/importacao"],
-  ["Intermediário", "/intermediario"],
-  ["Loja de Produtos", "/produtos"],
-  ["Planos", "/planos"],
-  ["Como funciona", "/#como"],
-  ["Seja um profissional", "/parceiro"],
-  ["Empresas", "/empresas"],
-  ["Sobre nós", "/sobre"],
-  ["Contactos", "/contactos"],
-];
 
 export const Wordmark = ({ light }: { light?: boolean }) => {
   const [store] = useStore();
@@ -47,6 +32,7 @@ export const Wordmark = ({ light }: { light?: boolean }) => {
 
 export function LocationPicker({ compact }: { compact?: boolean }) {
   const [store, setStore] = useStore();
+  const { t } = useI18n();
   const loc = store.location || "huambo";
   return (
     <label
@@ -58,7 +44,7 @@ export function LocationPicker({ compact }: { compact?: boolean }) {
       }
     >
       <Icon name="MapPin" className="size-4 shrink-0 text-action" />
-      <span className="sr-only">Localização</span>
+      <span className="sr-only">{t("nav_location")}</span>
       <select
         value={loc}
         onChange={(e) => setStore(() => ({ location: e.target.value }))}
@@ -67,7 +53,7 @@ export function LocationPicker({ compact }: { compact?: boolean }) {
         {LOCATIONS.map((l) => (
           <option key={l.id} value={l.id} disabled={!l.active} className="text-primary bg-white font-medium">
             {l.name}
-            {l.active ? "" : " · em breve"}
+            {l.active ? "" : ` · ${t("nav_coming_soon")}`}
           </option>
         ))}
       </select>
@@ -102,6 +88,7 @@ function MenuItem({
 
 export function ProfileMenu({ onNav }: { onNav?: (path: string) => void }) {
   const [store, setStore] = useStore();
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -154,28 +141,28 @@ export function ProfileMenu({ onNav }: { onNav?: (path: string) => void }) {
     if (!user) return null;
     switch (user.role) {
       case "CUSTOMER":
-        return { label: "Cliente", color: "bg-action/20 text-action-text border-action/30" };
+        return { label: t("role_customer"), color: "bg-action/20 text-action-text border-action/30" };
       case "SELLER":
-        return { label: "Vendedor da Praça", color: "bg-emerald-100 text-emerald-800 border-emerald-300" };
+        return { label: t("role_seller"), color: "bg-emerald-100 text-emerald-800 border-emerald-300" };
       case "AFFILIATE":
-        return { label: "Afiliado Oficial", color: "bg-indigo-100 text-indigo-800 border-indigo-300" };
+        return { label: t("role_affiliate"), color: "bg-indigo-100 text-indigo-800 border-indigo-300" };
       case "EMPLOYEE":
-        return { label: "Funcionário", color: "bg-blue-100 text-blue-700 border-blue-200" };
+        return { label: t("role_employee"), color: "bg-blue-100 text-blue-700 border-blue-200" };
       case "PARTNER":
       case "BUSINESS_PARTNER":
-        return { label: "Empresa Parceira", color: "bg-amber-100 text-amber-700 border-amber-200" };
+        return { label: t("role_partner"), color: "bg-amber-100 text-amber-700 border-amber-200" };
       case "PROFESSIONAL":
-        return { label: "Profissional Independente", color: "bg-emerald-100 text-emerald-700 border-emerald-200" };
+        return { label: t("role_professional"), color: "bg-emerald-100 text-emerald-700 border-emerald-200" };
       case "OPERATIONS":
-        return { label: "Operação e Produção", color: "bg-blue-100 text-blue-800 border-blue-300" };
+        return { label: t("role_operations"), color: "bg-blue-100 text-blue-800 border-blue-300" };
       case "CUSTOMER_SUPPORT":
-        return { label: "Apoio ao Cliente", color: "bg-teal-100 text-teal-800 border-teal-300" };
+        return { label: t("role_support"), color: "bg-teal-100 text-teal-800 border-teal-300" };
       case "ADMIN":
-        return { label: "Administrador", color: "bg-red-100 text-red-700 border-red-200" };
+        return { label: t("role_admin"), color: "bg-red-100 text-red-700 border-red-200" };
       case "SUPER_ADMIN":
-        return { label: "Super Administrador", color: "bg-purple-100 text-purple-700 border-purple-200" };
+        return { label: t("role_super_admin"), color: "bg-purple-100 text-purple-700 border-purple-200" };
       default:
-        return { label: "Utilizador", color: "bg-mist text-primary border-border" };
+        return { label: t("role_user"), color: "bg-mist text-primary border-border" };
     }
   };
 
@@ -386,7 +373,7 @@ export function ProfileMenu({ onNav }: { onNav?: (path: string) => void }) {
                     className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs font-bold text-red-600 hover:bg-red-50 transition cursor-pointer"
                   >
                     <Icon name="LogOut" className="size-4" />
-                    <span>8. Sair da Conta</span>
+                    <span>{t("nav_sign_out_full")}</span>
                   </button>
                 </div>
               </div>
@@ -394,25 +381,25 @@ export function ProfileMenu({ onNav }: { onNav?: (path: string) => void }) {
           ) : (
             <div>
               <div className="px-2 py-2 mb-2 border-b border-border">
-                <p className="font-display text-sm font-bold text-primary">Conta Resolve Express</p>
+                <p className="font-display text-sm font-bold text-primary">{t("nav_account_title")}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Aceda à sua conta para gerir pedidos, serviços e produtos no Huambo.
+                  {t("nav_account_desc")}
                 </p>
               </div>
 
               <div className="space-y-1.5 p-1">
                 <Btn kind="action" className="w-full text-xs" onClick={() => navigate("/entrar")}>
-                  <Icon name="LogIn" className="size-3.5" /> Iniciar Sessão
+                  <Icon name="LogIn" className="size-3.5" /> {t("nav_login")}
                 </Btn>
                 <Btn kind="ghost" className="w-full text-xs" onClick={() => navigate("/cadastro")}>
-                  <Icon name="UserPlus" className="size-3.5" /> Criar Conta de Cliente
+                  <Icon name="UserPlus" className="size-3.5" /> {t("nav_create_account")}
                 </Btn>
                 <button
                   type="button"
                   onClick={() => navigate("/ambientes")}
                   className="mt-2 w-full text-center text-xs font-bold text-action hover:underline py-1"
                 >
-                  🏢 Escolha o seu ambiente (5 Portais)
+                  🏢 {t("nav_choose_env")}
                 </button>
               </div>
             </div>
@@ -434,13 +421,14 @@ export function Header({
   const [store, setStore] = useStore();
   const { t } = useI18n();
   const isAdmin = store.currentUser?.role === "ADMIN" || store.currentUser?.role === "SUPER_ADMIN";
+  const support = getSupportContactInfo(store);
 
   const navItems: [string, string][] = [
     [t("nav_home"), "/"],
     [t("nav_services"), "/servicos"],
     [t("nav_praca"), "/praca"],
-    ["Importação", "/importacao"],
-    ["Intermediário", "/intermediario"],
+    [t("nav_import"), "/importacao"],
+    [t("nav_intermediary"), "/intermediario"],
     [t("nav_products"), "/produtos"],
     [t("nav_plans"), "/planos"],
     [t("nav_how_it_works"), "/#como"],
@@ -470,7 +458,7 @@ export function Header({
     <header className="sticky top-0 z-40 shadow-md w-full overflow-x-clip bg-action">
       {/* Upper micro-bar: Cor azul do sistema */}
       <div className="border-b border-white/10 bg-primary text-white text-xs w-full">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8 py-1.5">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 sm:px-6 lg:px-8 py-1.5">
           <div className="flex items-center gap-3">
             <span className="font-semibold text-white/90 hidden sm:inline">
               🇦🇴 Angola
@@ -478,6 +466,7 @@ export function Header({
             <div className="flex items-center gap-1">
               <span className="text-white/70">{t("nav_currency")}</span>
               <select
+                aria-label={t("nav_currency")}
                 value={store.currency}
                 onChange={(e) =>
                   setStore(() => ({ currency: e.target.value as CurrencyCode }))
@@ -492,6 +481,7 @@ export function Header({
             <div className="flex items-center gap-1 border-l border-white/20 pl-3">
               <span className="text-white/70">{t("nav_language")}</span>
               <select
+                aria-label={t("nav_language")}
                 value={store.language}
                 onChange={(e) =>
                   setStore(() => ({ language: e.target.value as LanguageCode }))
@@ -507,8 +497,23 @@ export function Header({
           </div>
 
           <div className="flex items-center gap-3 text-xs text-white/80 font-medium">
-            <span className="hidden sm:inline">{t("nav_support")} <strong className="text-white font-bold">+244 923 111 222</strong></span>
-            <span className="hidden md:inline border-l border-white/20 pl-3">{t("nav_hours")} <strong className="text-white font-bold">Seg - Sáb 07h às 19h</strong></span>
+            <span className="hidden sm:inline">
+              {t("nav_support")}{" "}
+              <a href={`tel:${support.phone.replace(/[^\d+]/g, "")}`} className="text-white font-bold hover:underline">
+                {support.phone}
+              </a>
+            </span>
+            <span className="hidden md:inline border-l border-white/20 pl-3">
+              {t("nav_hours")}{" "}
+              <strong className="text-white font-bold">
+                {support.days} · {support.hours}
+              </strong>
+            </span>
+            <span className="hidden xl:inline border-l border-white/20 pl-3">
+              <a href={`mailto:${support.email}`} className="text-white/95 font-semibold hover:underline">
+                {support.email}
+              </a>
+            </span>
           </div>
         </div>
       </div>
@@ -640,17 +645,17 @@ export function Header({
                   }}
                   className="text-xs font-bold text-red-600 hover:underline px-2 py-1"
                 >
-                  Sair
+                  {t("nav_logout")}
                 </button>
               </div>
             </div>
           ) : (
             <div className="mb-3 flex items-center gap-2">
               <Btn kind="action" className="flex-1 text-xs min-h-10" onClick={() => nav("/entrar")}>
-                Iniciar Sessão
+                {t("nav_login")}
               </Btn>
               <Btn kind="ghost" className="flex-1 text-xs min-h-10" onClick={() => nav("/cadastro")}>
-                Criar Conta
+                {t("nav_create_account")}
               </Btn>
             </div>
           )}
@@ -658,7 +663,7 @@ export function Header({
           <div className="mb-3 @5xl:hidden">
             <LocationPicker />
           </div>
-          {NAV_ITEMS.map(([label, path]) => (
+          {navItems.map(([label, path]) => (
             <button
               key={path}
               type="button"
@@ -671,25 +676,25 @@ export function Header({
           ))}
           <div className="mt-4 grid grid-cols-2 gap-2">
             <Btn kind="action" className="col-span-2 min-h-11" onClick={() => nav("/praca")}>
-              🏪 A PRAÇA — Marketplace
+              🏪 A {t("nav_praca")} — Marketplace
             </Btn>
             <Btn kind="ghost" onClick={() => nav("/importacao")}>
-              ✈️ Importação
+              ✈️ {t("nav_import")}
             </Btn>
             <Btn kind="ghost" onClick={() => nav("/intermediario")}>
-              🤝 Intermediário
+              🤝 {t("nav_intermediary")}
             </Btn>
             <Btn kind="ghost" onClick={() => nav("/praca/painel-vendedor")}>
-              📦 Painel Vendedor
+              📦 {t("role_seller")}
             </Btn>
             <Btn kind="ghost" onClick={() => nav("/praca/painel-afiliado")}>
-              🚀 Painel Afiliado
+              🚀 {t("role_affiliate")}
             </Btn>
             <Btn kind="ghost" onClick={() => nav("/produtos")}>
-              🛍️ Loja Produtos
+              🛍️ {t("nav_products")}
             </Btn>
             <Btn kind="ghost" onClick={() => nav("/servicos")}>
-              🔍 Serviços
+              🔍 {t("nav_services")}
             </Btn>
             <Btn kind="ghost" onClick={() => nav("/portal-cliente")}>
               Portal Cliente
@@ -727,6 +732,7 @@ const L = ({ to, children }: { to: string; children: React.ReactNode }) => (
 export function Footer() {
   const [store] = useStore();
   const { t } = useI18n();
+  const support = getSupportContactInfo(store);
   const colCls = "flex flex-col gap-2 text-sm text-white/70";
   return (
     <footer className="bg-ink text-white">
@@ -745,9 +751,9 @@ export function Footer() {
         <div className={colCls}>
           <p className="mb-1 font-display font-bold text-white">{t("footer_col_market")}</p>
           <L to="/servicos">{t("nav_services")}</L>
-          <L to="/praca">A PRAÇA Marketplace</L>
-          <L to="/importacao">Importação & Cartões</L>
-          <L to="/intermediario">Intermediário</L>
+          <L to="/praca">A {t("nav_praca")} Marketplace</L>
+          <L to="/importacao">{t("nav_import")}</L>
+          <L to="/intermediario">{t("nav_intermediary")}</L>
           <L to="/produtos">{t("nav_products")}</L>
           <L to="/planos">{t("nav_plans")}</L>
           <L to="/parceiro">{t("nav_be_partner")}</L>
@@ -766,7 +772,7 @@ export function Footer() {
         </div>
         <div className={colCls}>
           <p className="mb-1 font-display font-bold text-white">{t("footer_col_legal")}</p>
-          <L to="/documentos">Documentos & Catálogos PDF</L>
+          <L to="/documentos">{t("footer_docs_pdf")}</L>
           {Object.entries(LEGAL_DOCS)
             .slice(0, 4)
             .map(([k, v]) => (
@@ -775,10 +781,22 @@ export function Footer() {
               </L>
             ))}
           <span>
-            WhatsApp:{" "}
-            {store.whatsapp
-              ? `+${store.whatsapp.replace(/\D/g, "")}`
-              : "+244 923 000 000"}
+            {t("nav_support")}{" "}
+            <a href={`tel:${support.phone.replace(/[^\d+]/g, "")}`} className="text-white hover:underline">
+              {support.phone}
+            </a>
+          </span>
+          <span>
+            WhatsApp: +{support.whatsapp}
+          </span>
+          <span>
+            {t("nav_email_label")}{" "}
+            <a href={`mailto:${support.email}`} className="text-white hover:underline">
+              {support.email}
+            </a>
+          </span>
+          <span>
+            {t("nav_hours")} {support.days} · {support.hours}
           </span>
         </div>
       </div>

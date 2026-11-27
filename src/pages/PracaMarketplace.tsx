@@ -13,6 +13,7 @@ import {
 } from "../lib/store";
 import { PaymentCheckoutModal } from "../ui/PaymentCheckoutModal";
 import { AuthPromptModal } from "../ui/AuthPromptModal";
+import { useI18n } from "../lib/i18n";
 
 const PROVINCES_MAP: Record<string, string[]> = {
   Huambo: ["Huambo (Sede)", "Caála", "Bailundo", "Cachiungo", "Ekunha", "Londuimbali", "Longonjo", "Mungo", "Tchicala Tcholohanga", "Ucuma"],
@@ -31,6 +32,7 @@ export function PracaMarketplace({
   initialProductModalId?: string;
 }) {
   const [store, setStore] = useStore();
+  const { t } = useI18n();
   const [selectedCatId, setSelectedCatId] = useState<string>(initialCategory || "all");
   const [selectedSubcat, setSelectedSubcat] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -358,13 +360,13 @@ export function PracaMarketplace({
             <div className="max-w-2xl text-center md:text-left">
               <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3.5 py-1 text-xs font-bold text-action backdrop-blur-md border border-white/15 mb-3">
                 <Icon name="Store" className="size-3.5 text-action" />
-                <span>O Grande Mercado Online de Angola</span>
+                <span>{t("praca_eyebrow")}</span>
               </div>
               <h1 className="font-display text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-white leading-tight">
-                A PRAÇA <span className="text-action">RESOLVEEXPRESS</span>
+                {t("praca_title")}
               </h1>
               <p className="mt-2 text-sm sm:text-base text-slate-200 font-medium leading-relaxed">
-                Compre com entrega rápida no Huambo e em Angola. Venda os seus produtos com comissão transparente ou ganhe comissões divulgando como afiliado.
+                {t("praca_sub")}
               </p>
 
               {/* CTAs de Vendedor e Afiliado */}
@@ -375,7 +377,7 @@ export function PracaMarketplace({
                   className="inline-flex items-center gap-2 rounded-xl bg-action px-4 py-2.5 text-xs sm:text-sm font-black text-white hover:brightness-110 shadow-lg shadow-action/30 transition transform active:scale-95 cursor-pointer"
                 >
                   <Icon name="Store" className="size-4" />
-                  <span>Quero Vender na Praça</span>
+                  <span>{t("praca_become_seller")}</span>
                 </button>
                 <button
                   type="button"
@@ -383,7 +385,7 @@ export function PracaMarketplace({
                   className="inline-flex items-center gap-2 rounded-xl bg-white/15 px-4 py-2.5 text-xs sm:text-sm font-bold text-white hover:bg-white/25 border border-white/20 backdrop-blur-md transition transform active:scale-95 cursor-pointer"
                 >
                   <Icon name="Award" className="size-4 text-action" />
-                  <span>Programa de Afiliados</span>
+                  <span>{t("praca_become_affiliate")}</span>
                 </button>
                 <button
                   type="button"
@@ -425,7 +427,7 @@ export function PracaMarketplace({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Pesquise por roupas, computadores, sapatilhas, comida, móveis, ferramentas..."
+                placeholder={t("praca_search_placeholder")}
                 className="w-full rounded-2xl border-2 border-white/20 bg-white/95 text-slate-900 py-3.5 pl-12 pr-28 text-sm sm:text-base font-medium shadow-2xl focus:border-action focus:bg-white focus:outline-none"
               />
               {searchQuery && (
@@ -441,7 +443,7 @@ export function PracaMarketplace({
                 type="button"
                 className="absolute right-2 rounded-xl bg-action px-4 py-2 text-xs sm:text-sm font-bold text-white hover:brightness-105"
               >
-                Buscar
+                {t("common_search")}
               </button>
             </div>
           </div>
@@ -465,7 +467,7 @@ export function PracaMarketplace({
               }`}
             >
               <Icon name="Layers" className="size-3.5" />
-              <span>Todas as Categorias</span>
+              <span>{t("praca_all_cats")}</span>
             </button>
 
             {categories.map((cat) => {
@@ -547,7 +549,7 @@ export function PracaMarketplace({
                     selectedCondition === "all" ? "bg-white dark:bg-slate-700 text-primary shadow-2xs" : "text-slate-500"
                   }`}
                 >
-                  Todos
+                  {t("market_filter_all")}
                 </button>
                 <button
                   type="button"
@@ -556,7 +558,7 @@ export function PracaMarketplace({
                     selectedCondition === "NOVO" ? "bg-white dark:bg-slate-700 text-emerald-700 shadow-2xs" : "text-slate-500"
                   }`}
                 >
-                  Novos
+                  {t("section_praca_new_badge")}
                 </button>
                 <button
                   type="button"
@@ -565,7 +567,7 @@ export function PracaMarketplace({
                     selectedCondition === "USADO" ? "bg-white dark:bg-slate-700 text-amber-700 shadow-2xs" : "text-slate-500"
                   }`}
                 >
-                  Usados / Recondicionados
+                  {t("section_praca_used_badge")}
                 </button>
               </div>
 
@@ -575,11 +577,11 @@ export function PracaMarketplace({
                 onChange={(e: any) => setSelectedPriceRange(e.target.value)}
                 className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 font-bold text-slate-700 dark:text-slate-200 outline-none"
               >
-                <option value="all">Todas as Faixas de Preço</option>
-                <option value="under10k">Até 10.000 Kz</option>
-                <option value="10k_50k">10.000 Kz a 50.000 Kz</option>
-                <option value="50k_150k">50.000 Kz a 150.000 Kz</option>
-                <option value="above150k">Mais de 150.000 Kz</option>
+                <option value="all">{t("praca_all_prices")}</option>
+                <option value="under10k">{t("praca_up_to")} {formatCurrency(10000, store.currency)}</option>
+                <option value="10k_50k">{formatCurrency(10000, store.currency)} – {formatCurrency(50000, store.currency)}</option>
+                <option value="50k_150k">{formatCurrency(50000, store.currency)} – {formatCurrency(150000, store.currency)}</option>
+                <option value="above150k">{t("praca_above")} {formatCurrency(150000, store.currency)}</option>
               </select>
 
               {/* Botão para alternar Filtros Avançados (Localização em Cascata, Origem, Disponibilidade) */}
@@ -593,7 +595,7 @@ export function PracaMarketplace({
                 }`}
               >
                 <Icon name="MapPin" className="size-3.5" />
-                <span>Localização & Origem</span>
+                <span>{t("nav_location")}</span>
                 {(selectedProvince !== "all" || selectedOrigin !== "all" || selectedAvailability !== "all") && (
                   <span className="size-2 rounded-full bg-white" />
                 )}
@@ -606,7 +608,7 @@ export function PracaMarketplace({
                   onChange={(e) => setSelectedSellerFilter(e.target.value)}
                   className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 font-bold text-slate-700 dark:text-slate-200 outline-none max-w-[180px] truncate"
                 >
-                  <option value="all">Todas as Lojas</option>
+                  <option value="all">{t("market_filter_all")}</option>
                   {sellers.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.storeName}
@@ -618,16 +620,15 @@ export function PracaMarketplace({
 
             {/* Ordenação */}
             <div className="flex items-center gap-2">
-              <span className="font-bold text-slate-500">Ordenar:</span>
               <select
                 value={selectedSort}
                 onChange={(e: any) => setSelectedSort(e.target.value)}
                 className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 font-bold text-slate-700 dark:text-slate-200 outline-none"
               >
-                <option value="popular">Mais Populares</option>
-                <option value="price_asc">Menor Preço</option>
-                <option value="price_desc">Maior Preço</option>
-                <option value="newest">Novidades</option>
+                <option value="popular">{t("praca_sort_popular")}</option>
+                <option value="price_asc">{t("praca_sort_price_asc")}</option>
+                <option value="price_desc">{t("praca_sort_price_desc")}</option>
+                <option value="newest">{t("praca_sort_newest")}</option>
               </select>
             </div>
           </div>
@@ -638,7 +639,7 @@ export function PracaMarketplace({
               {/* Província */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-500 mb-1">
-                  1. Província:
+                  1. {t("book_province")}:
                 </label>
                 <select
                   value={selectedProvince}
@@ -648,7 +649,7 @@ export function PracaMarketplace({
                   }}
                   className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none"
                 >
-                  <option value="all">Todas as Províncias</option>
+                  <option value="all">{t("praca_all_provinces")}</option>
                   {Object.keys(PROVINCES_MAP).map((prov) => (
                     <option key={prov} value={prov}>
                       {prov}
@@ -784,7 +785,7 @@ export function PracaMarketplace({
                 }}
                 className="rounded-xl bg-action px-4 py-2 text-xs font-bold text-white hover:brightness-105"
               >
-                Limpar Todos os Filtros
+                {t("cat_clear_filters")}
               </button>
             </div>
           </div>
@@ -831,7 +832,7 @@ export function PracaMarketplace({
                               : "bg-amber-600 text-white"
                           }`}
                         >
-                          {prod.condition}
+                          {prod.condition === "NOVO" ? t("section_praca_new_badge") : t("section_praca_used_badge")}
                         </span>
                       )}
 
@@ -887,10 +888,10 @@ export function PracaMarketplace({
                           handleAddToCart(prod, 1);
                         }}
                         className="flex items-center justify-center gap-1 rounded-xl bg-action py-2 text-xs font-bold text-white hover:brightness-105 active:scale-95 transition"
-                        title="Adicionar ao Carrinho"
+                        title={t("market_add_cart")}
                       >
                         <Icon name="ShoppingCart" className="size-3.5" />
-                        <span className="hidden sm:inline">Comprar</span>
+                        <span className="hidden sm:inline">{t("section_market_buy")}</span>
                       </button>
 
                       <button
@@ -1093,7 +1094,7 @@ export function PracaMarketplace({
                       </p>
                     </div>
                     <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
-                      Verificado
+                      {t("section_praca_verified")}
                     </span>
                   </div>
 

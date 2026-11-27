@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Icon, Btn, Field, inputCls } from "./kit";
-import { useStore, kz } from "../lib/store";
+import { useStore, kz, formatCurrency } from "../lib/store";
+import { useI18n } from "../lib/i18n";
 import { PAYMENTS, ANGOLA_BANKS, type AngolaBank } from "../lib/data";
 import {
   isSupabaseConfigured,
@@ -40,6 +41,7 @@ export function PaymentCheckoutModal({
   onPaymentSuccess,
 }: PaymentCheckoutModalProps) {
   const [store, setStore] = useStore();
+  const { t } = useI18n();
   const [selectedMethod, setSelectedMethod] = useState<"mcx" | "ref" | "transfer" | "cash" | "wallet">("mcx");
 
   // Multicaixa Express State
@@ -426,17 +428,17 @@ export function PaymentCheckoutModal({
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] uppercase font-black tracking-wider text-action">
-                  Checkout de Pagamento Seguro
+                  {t("pay_title_prefix")}
                 </span>
                 <span className="rounded-full bg-ok/10 text-ok px-2 py-0.2 text-[10px] font-bold">
-                  Angola · AOA
+                  Angola · {store.currency}
                 </span>
               </div>
               <h2 className="font-display text-xl sm:text-2xl font-black text-primary">
                 {title}
               </h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Identificador: <strong className="text-primary font-mono">{itemId}</strong> · Cliente: <strong>{customerName}</strong>
+                ID: <strong className="text-primary font-mono">{itemId}</strong> · <strong>{customerName}</strong>
               </p>
             </div>
           </div>
@@ -444,7 +446,7 @@ export function PaymentCheckoutModal({
             type="button"
             onClick={onClose}
             className="rounded-full p-2 text-muted-foreground hover:bg-mist hover:text-foreground"
-            aria-label="Fechar"
+            aria-label={t("common_close")}
           >
             <Icon name="X" className="size-5" />
           </button>
@@ -454,11 +456,16 @@ export function PaymentCheckoutModal({
         <div className="my-4 rounded-[var(--radius)] bg-gradient-to-r from-primary to-primary/95 text-white p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <span className="text-[11px] uppercase font-bold text-white/70 block">
-              Total a Liquidar
+              {t("pay_amount_label")}
             </span>
             <div className="font-display text-2xl sm:text-3xl font-black text-action">
               {kz(totalAOA)}
             </div>
+            {store.currency !== "AOA" && (
+              <span className="text-[11px] font-mono text-white/75 block mt-0.5">
+                {t("pay_aoa_equiv")} {formatCurrency(totalAOA, "AOA")}
+              </span>
+            )}
             {deliveryAddress && (
               <p className="text-xs text-white/75 mt-1 truncate max-w-md">
                 📍 {deliveryAddress}
@@ -467,7 +474,7 @@ export function PaymentCheckoutModal({
           </div>
           <div className="flex items-center gap-2 self-start sm:self-auto">
             <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold backdrop-blur-xs flex items-center gap-1.5 text-white">
-              <Icon name="ShieldCheck" className="size-4 text-ok" /> Pagamento 100% Protegido
+              <Icon name="ShieldCheck" className="size-4 text-ok" /> {t("pay_protected")}
             </span>
           </div>
         </div>
@@ -482,7 +489,7 @@ export function PaymentCheckoutModal({
         {/* Payment Methods Tabs */}
         <div className="space-y-3">
           <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
-            Selecione o Método de Pagamento
+            {t("pay_select_method")}
           </label>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
             {PAYMENTS.map((p) => {
@@ -712,11 +719,16 @@ export function PaymentCheckoutModal({
 
                 <div className="bg-mist p-3 rounded-lg border border-border">
                   <span className="text-[10px] uppercase font-bold text-muted-foreground block">
-                    Montante
+                    {t("pay_amount_label")}
                   </span>
                   <span className="font-display text-xl font-black text-primary tracking-wider">
                     {kz(totalAOA)}
                   </span>
+                  {store.currency !== "AOA" && (
+                    <span className="block text-[10px] text-muted-foreground mt-0.5">
+                      ({formatCurrency(totalAOA, "AOA")})
+                    </span>
+                  )}
                 </div>
               </div>
 

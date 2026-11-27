@@ -773,7 +773,7 @@ export function PracaAffiliatePanel({ initialTab = "overview" }: { initialTab?: 
                   Carteira do Afiliado
                 </h2>
                 <p className="text-xs text-muted-foreground">
-                  Solicite levantamentos para a sua conta bancária a partir de 10.000 Kz
+                  Solicite levantamentos para a sua conta bancária a partir de {kz(10000)}
                 </p>
               </div>
               <button

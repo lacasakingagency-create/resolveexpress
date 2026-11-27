@@ -99,7 +99,7 @@ export function SearchBox({ onPick }: { onPick: (s: Service) => void }) {
                     </span>
                     {!av && (
                       <span className="text-sm text-muted-foreground">
-                        Indisponível
+                        {t("ticket_unavailable")}
                       </span>
                     )}
                   </button>
@@ -108,7 +108,7 @@ export function SearchBox({ onPick }: { onPick: (s: Service) => void }) {
             })
           ) : (
             <li className="px-4 py-3 text-muted-foreground">
-              Nenhum serviço com “{q}”. Fale connosco no WhatsApp.
+              {t("search_empty_prefix")} “{q}”. {t("search_empty_suffix")}
             </li>
           )}
         </ul>
@@ -125,6 +125,7 @@ export function Ticket({
   onContinue?: (svc: Service) => void;
 }) {
   const [store] = useStore();
+  const { t } = useI18n();
   const loc = LOCATIONS.find((l) => l.id === (store.location || "huambo"));
   const cfg = picked ? svcConfig(store, picked) : null;
   const cat = picked ? findCategory(picked.categoryId) : null;
@@ -132,7 +133,7 @@ export function Ticket({
   return (
     <div className="ticket relative w-72 rounded-[var(--radius)] bg-paper p-5 shadow-[0_24px_60px_oklch(0.2_0.06_258/0.25)]">
       <div className="flex items-center justify-between font-mono text-sm text-muted-foreground">
-        <span>SEU PEDIDO</span>
+        <span>{t("ticket_your_order")}</span>
         <span>REX-{new Date().getFullYear()}-······</span>
       </div>
       <div className="my-4 border-t-2 border-dashed border-border" />
@@ -146,19 +147,19 @@ export function Ticket({
         </div>
       )}
       <p className="font-display text-xl leading-tight font-bold">
-        {picked ? picked.name : "Escolha um serviço"}
+        {picked ? picked.name : t("ticket_choose")}
       </p>
       <p className="mt-1 text-sm text-muted-foreground">
-        {cat ? cat.name : "Pesquise ao lado ↖"}
+        {cat ? cat.name : t("ticket_pick_hint")}
       </p>
       <dl className="mt-4 grid grid-cols-2 gap-y-2 text-sm">
-        <dt className="text-muted-foreground">Local</dt>
+        <dt className="text-muted-foreground">{t("ticket_location")}</dt>
         <dd className="text-right font-semibold">{loc?.name}</dd>
-        <dt className="text-muted-foreground">Preço</dt>
+        <dt className="text-muted-foreground">{t("ticket_price")}</dt>
         <dd className="text-right font-semibold">
-          {cfg ? (cfg.price ? `desde ${formatCurrency(cfg.price, store.currency)}` : "Orçamento") : "·"}
+          {cfg ? (cfg.price ? `${t("ticket_from")} ${formatCurrency(cfg.price, store.currency)}` : t("ticket_budget")) : "·"}
         </dd>
-        <dt className="text-muted-foreground">Por</dt>
+        <dt className="text-muted-foreground">{t("ticket_by")}</dt>
         <dd className="text-right font-semibold">
           {cfg ? PROVIDERS[cfg.provider] : "·"}
         </dd>
@@ -168,7 +169,7 @@ export function Ticket({
           className="mt-5 w-full"
           onClick={() => (onContinue ? onContinue(picked) : go(`/pedir/${picked.id}`))}
         >
-          Continuar pedido
+          {t("ticket_continue_btn")}
         </Btn>
       )}
     </div>
@@ -177,6 +178,7 @@ export function Ticket({
 
 export function CategoryCard({ c }: { c: Category }) {
   const [store] = useStore();
+  const { t } = useI18n();
   const n = countAvailable(store, c);
   const isCustom = Boolean(store.categoryOverrides?.[c.id]);
 
@@ -204,7 +206,7 @@ export function CategoryCard({ c }: { c: Category }) {
 
         {isCustom && (
           <span className="absolute top-2.5 right-2.5 rounded-full bg-primary/90 text-primary-foreground text-[10px] font-bold px-2 py-0.5 shadow-2xs backdrop-blur-xs">
-            Personalizado
+            {t("section_cats_custom")}
           </span>
         )}
       </div>
@@ -217,7 +219,7 @@ export function CategoryCard({ c }: { c: Category }) {
               {c.name.replace("Resolve ", "")}
             </h3>
             <span className="shrink-0 text-[11px] font-semibold text-muted-foreground bg-mist px-2 py-0.5 rounded-full">
-              {n} {n === 1 ? "serviço" : "serviços"}
+              {n} {n === 1 ? t("section_cats_service_one") : t("section_cats_service_many")}
             </span>
           </div>
           <p className="line-clamp-2 text-xs text-muted-foreground mt-1.5 leading-relaxed">
@@ -227,10 +229,10 @@ export function CategoryCard({ c }: { c: Category }) {
 
         <div className="flex w-full items-center justify-between text-xs border-t border-border/70 pt-2.5">
           <span className="text-[11px] font-medium text-muted-foreground">
-            Equipa Verificada
+            {t("section_cats_verified_team")}
           </span>
           <span className="flex items-center gap-1 font-bold text-action group-hover:translate-x-0.5 transition-transform">
-            Ver Serviços
+            {t("section_cats_explore")}
             <Icon name="ArrowRight" className="size-3.5" />
           </span>
         </div>
@@ -247,6 +249,7 @@ export function ServiceCard({
   onRequest?: (svc: Service) => void;
 }) {
   const [store] = useStore();
+  const { t } = useI18n();
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
   const cfg = svcConfig(store, svc);
   const cat = findCategory(svc.categoryId);
@@ -295,10 +298,10 @@ export function ServiceCard({
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <span className="font-semibold text-primary">
-            {cfg.price ? `desde ${formatCurrency(cfg.price, store.currency)}` : "Sob orçamento"}
+            {cfg.price ? `${t("ticket_from")} ${formatCurrency(cfg.price, store.currency)}` : t("ticket_on_quote")}
           </span>
           <span className="flex items-center gap-1 text-muted-foreground text-xs">
-            <Icon name="Star" className="size-3.5 text-amber-500 fill-amber-500" /> 4.9 (Verificado)
+            <Icon name="Star" className="size-3.5 text-amber-500 fill-amber-500" /> 4.9 ({t("ticket_verified")})
           </span>
           <span
             className={
@@ -311,7 +314,7 @@ export function ServiceCard({
                 "size-2 rounded-full " + (cfg.available ? "bg-ok" : "bg-neutral-5")
               }
             />
-            {cfg.available ? "Disponível" : "Indisponível"}
+            {cfg.available ? t("ticket_available") : t("ticket_unavailable")}
           </span>
         </div>
         <Btn
@@ -319,7 +322,7 @@ export function ServiceCard({
           disabled={!cfg.available}
           onClick={handleClick}
         >
-          {cfg.available ? "Solicitar" : "Indisponível"}
+          {cfg.available ? t("section_feat_request") : t("ticket_unavailable")}
         </Btn>
       </div>
 
@@ -477,15 +480,48 @@ export function Home() {
                 }
                 aria-hidden={!isActive}
               >
-                {/* Background Image - Clearly Visible */}
-                <img
-                  src={banner.image?.trim() || "https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&w=1600&q=80"}
-                  alt={banner.titleStart + " " + banner.titleHighlight}
-                  className={`absolute inset-0 h-full w-full transition-transform duration-1000 ease-out ${
-                    banner.imageFit === "contain" ? "object-contain p-4" : "object-cover object-center"
-                  }`}
-                  loading={index === 0 ? "eager" : "lazy"}
-                />
+                {/* Background Image - Responsive Desktop & Mobile */}
+                {(() => {
+                  const desktopUrl =
+                    banner.image?.trim() ||
+                    banner.mobileImage?.trim() ||
+                    "https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&w=1600&q=80";
+                  const mobileUrl = banner.mobileImage?.trim();
+                  const desktopFitClass =
+                    banner.imageFit === "contain" ? "object-contain p-4" : "object-cover object-center";
+                  const mobileFitClass =
+                    (banner.mobileImageFit || banner.imageFit) === "contain"
+                      ? "object-contain p-3"
+                      : "object-cover object-center";
+
+                  if (mobileUrl) {
+                    return (
+                      <>
+                        <img
+                          src={desktopUrl}
+                          alt={banner.titleStart + " " + banner.titleHighlight}
+                          className={`hidden md:block absolute inset-0 h-full w-full transition-transform duration-1000 ease-out ${desktopFitClass}`}
+                          loading={index === 0 ? "eager" : "lazy"}
+                        />
+                        <img
+                          src={mobileUrl}
+                          alt={banner.titleStart + " " + banner.titleHighlight}
+                          className={`block md:hidden absolute inset-0 h-full w-full transition-transform duration-1000 ease-out ${mobileFitClass}`}
+                          loading={index === 0 ? "eager" : "lazy"}
+                        />
+                      </>
+                    );
+                  }
+
+                  return (
+                    <img
+                      src={desktopUrl}
+                      alt={banner.titleStart + " " + banner.titleHighlight}
+                      className={`absolute inset-0 h-full w-full transition-transform duration-1000 ease-out ${desktopFitClass}`}
+                      loading={index === 0 ? "eager" : "lazy"}
+                    />
+                  );
+                })()}
 
                 {/* Soft directional gradient preserving image visibility while ensuring high text contrast */}
                 {(() => {
@@ -743,7 +779,7 @@ export function Home() {
                       </span>
                       {p.promotionalPriceAOA && (
                         <span className="absolute top-2.5 right-2.5 rounded-full bg-action px-2 py-0.5 text-[10px] font-black text-action-ink">
-                          PROMOÇÃO
+                          {t("section_market_promo")}
                         </span>
                       )}
                     </div>
@@ -763,7 +799,7 @@ export function Home() {
 
                   <div className="border-t border-border p-4 pt-3 flex items-center justify-between gap-2">
                     <div>
-                      <p className="text-[10px] uppercase font-bold text-muted-foreground">Preço por {p.unit}</p>
+                      <p className="text-[10px] uppercase font-bold text-muted-foreground">{t("section_market_per")} {p.unit}</p>
                       <p className="font-display text-lg font-black text-primary">
                         {formatCurrency(currentPrice, store.currency)}
                       </p>
@@ -783,10 +819,10 @@ export function Home() {
                           ? "bg-ok text-white"
                           : "bg-action text-action-ink hover:bg-action-hover active:scale-95")
                       }
-                      title="Adicionar ao carrinho"
+                      title={t("market_add_cart")}
                     >
                       <Icon name={isAdded ? "Check" : "ShoppingCart"} className="size-3.5" />
-                      <span>{isAdded ? "Adicionado!" : "Comprar"}</span>
+                      <span>{isAdded ? t("section_market_added") : t("section_market_buy")}</span>
                     </button>
                   </div>
                 </div>
@@ -799,14 +835,14 @@ export function Home() {
       {/* SECÇÃO: PRODUTOS DA NOSSA PRAÇA (PARTE 4) */}
       <div className="border-b border-border bg-gradient-to-b from-white to-slate-50 dark:from-slate-900 dark:to-slate-950 py-4">
         <Section
-          eyebrow="COMÉRCIO LOCAL & INDEPENDENTE"
+          eyebrow={t("section_praca_eyebrow")}
           title={
             <div className="flex flex-col gap-1">
               <span className="font-display text-2xl sm:text-3xl font-black text-primary dark:text-white">
-                PRODUTOS DA NOSSA PRAÇA
+                {t("section_praca_title")}
               </span>
               <p className="text-xs sm:text-sm font-normal text-muted-foreground max-w-2xl">
-                Descobre o que está disponível perto de ti. Encontra produtos novos e usados, compara preços e compra sem complicações.
+                {t("section_praca_sub")}
               </p>
             </div>
           }
@@ -814,7 +850,7 @@ export function Home() {
             <div className="flex items-center gap-2">
               <Btn kind="action" onClick={() => go("/praca")}>
                 <Icon name="Store" className="size-4" />
-                <span>Explorar Toda a Praça</span>
+                <span>{t("section_praca_explore_all")}</span>
               </Btn>
             </div>
           }
@@ -831,7 +867,7 @@ export function Home() {
                     : "bg-paper text-muted-foreground border border-border hover:border-action/50"
                 }`}
               >
-                Todos os Produtos
+                {t("section_praca_all")}
               </button>
               <button
                 type="button"
@@ -843,7 +879,7 @@ export function Home() {
                 }`}
               >
                 <span className="size-2 rounded-full bg-emerald-400" />
-                <span>Apenas Novos</span>
+                <span>{t("section_praca_new_only")}</span>
               </button>
               <button
                 type="button"
@@ -855,7 +891,7 @@ export function Home() {
                 }`}
               >
                 <span className="size-2 rounded-full bg-amber-400" />
-                <span>Artigos Usados</span>
+                <span>{t("section_praca_used")}</span>
               </button>
             </div>
 
@@ -864,7 +900,7 @@ export function Home() {
               onClick={() => go("/praca/registo-vendedor")}
               className="text-xs font-bold text-action hover:underline flex items-center gap-1"
             >
-              <span>Vender na Praça →</span>
+              <span>{t("section_praca_sell")}</span>
             </button>
           </div>
 
@@ -906,20 +942,20 @@ export function Home() {
                             : "bg-amber-600 text-white"
                         }`}
                       >
-                        {isNovo ? "Novo" : "Usado"}
+                        {isNovo ? t("section_praca_new_badge") : t("section_praca_used_badge")}
                       </span>
 
                       {/* Tag de Promoção se houver */}
                       {p.promotionalPriceAOA && (
                         <span className="absolute top-2.5 right-2.5 rounded-full bg-action px-2 py-0.5 text-[10px] font-black text-white shadow-xs">
-                          PROMO
+                          {t("section_market_promo")}
                         </span>
                       )}
 
                       {/* Vendedor Verificado Badge */}
                       <span className="absolute bottom-2 left-2.5 rounded-md bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-xs flex items-center gap-1">
                         <Icon name="CheckCircle2" className="size-3 text-action" />
-                        <span>Verificado</span>
+                        <span>{t("section_praca_verified")}</span>
                       </span>
                     </div>
 
@@ -950,7 +986,7 @@ export function Home() {
                   {/* Preço e Botão de Ação Direta para a Praça */}
                   <div className="border-t border-border p-4 pt-3 flex items-center justify-between gap-2 bg-slate-50/50 dark:bg-slate-900/50">
                     <div>
-                      <p className="text-[10px] uppercase font-bold text-muted-foreground">Preço</p>
+                      <p className="text-[10px] uppercase font-bold text-muted-foreground">{t("ticket_price")}</p>
                       <p className="font-display text-base sm:text-lg font-black text-primary dark:text-white">
                         {formatCurrency(currentPrice, store.currency)}
                       </p>
@@ -969,9 +1005,9 @@ export function Home() {
                           go(`/praca?prod=${p.id}`);
                         }}
                         className="inline-flex items-center gap-1 rounded-lg bg-action px-3 py-2 text-xs font-bold text-white shadow-xs hover:bg-action-hover active:scale-95 transition cursor-pointer"
-                        title="Ver detalhes na Praça"
+                        title={t("section_praca_view")}
                       >
-                        <span>Ver na Praça</span>
+                        <span>{t("section_praca_view")}</span>
                         <Icon name="ArrowRight" className="size-3.5" />
                       </button>
                     </div>
@@ -988,7 +1024,7 @@ export function Home() {
               className="inline-flex items-center gap-2 rounded-xl border border-action/40 bg-action/5 hover:bg-action/10 px-5 py-2.5 text-xs sm:text-sm font-bold text-action transition"
             >
               <Icon name="Store" className="size-4" />
-              <span>Ver todos os produtos no Catálogo da Praça ({store.products.length})</span>
+              <span>{t("section_praca_catalog_cta")} ({store.products.length})</span>
             </button>
           </div>
         </Section>
@@ -1014,31 +1050,11 @@ export function Home() {
       >
         <div className="grid gap-px overflow-hidden rounded-[var(--radius)] border border-border bg-border @3xl:grid-cols-5">
           {[
-            [
-              "BadgeCheck",
-              "Profissionais verificados",
-              "Documentos e referências validados antes do primeiro serviço.",
-            ],
-            [
-              "ClipboardList",
-              "Atendimento organizado",
-              "Cada pedido tem número, estado e histórico.",
-            ],
-            [
-              "Receipt",
-              "Preços transparentes",
-              "Preço fixo ou orçamento antes de confirmar.",
-            ],
-            [
-              "CalendarCheck",
-              "Agendamento fácil",
-              "Hoje, amanhã ou todas as semanas.",
-            ],
-            [
-              "Headset",
-              "Suporte ao cliente",
-              "Uma pessoa real no WhatsApp.",
-            ],
+            ["BadgeCheck", t("why_1_t"), t("why_1_d")],
+            ["ClipboardList", t("why_2_t"), t("why_2_d")],
+            ["Receipt", t("why_3_t"), t("why_3_d")],
+            ["CalendarCheck", t("why_4_t"), t("why_4_d")],
+            ["Headset", t("why_5_t"), t("why_5_d")],
           ].map(([ic, title, text]) => (
             <div key={title} className="flex flex-col gap-3 bg-paper p-6">
               <Icon name={ic} className="size-6 text-action" />
@@ -1067,7 +1083,7 @@ export function Home() {
                 className="flex flex-col gap-3 border-t-2 border-action pt-4"
               >
                 <span className="font-mono text-sm text-white/80">
-                  PASSO {idx + 1}
+                  {t("how_step_label")} {idx + 1}
                 </span>
                 <span className="font-display text-2xl leading-tight font-bold">
                   {step}

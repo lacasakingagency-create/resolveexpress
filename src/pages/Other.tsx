@@ -10,7 +10,8 @@ import {
   FilePick,
 } from "../ui/kit";
 import { CATEGORIES, LEGAL_DOCS } from "../lib/data";
-import { useStore, kz } from "../lib/store";
+import { useStore, getSupportContactInfo, waLink, formatCurrency } from "../lib/store";
+import { useI18n } from "../lib/i18n";
 import { PaymentCheckoutModal } from "../ui/PaymentCheckoutModal";
 
 const STATUS_CLS: Record<string, string> = {
@@ -34,6 +35,7 @@ export const StatusPill = ({ s }: { s: string }) => (
 
 export function Orders() {
   const [store, setStore] = useStore();
+  const { t } = useI18n();
   const [payBooking, setPayBooking] = useState<any | null>(null);
 
   const cancel = (id: string) =>
@@ -54,8 +56,8 @@ export function Orders() {
 
   return (
     <Section
-      eyebrow="Os meus pedidos"
-      title="Acompanhe cada pedido, do início ao fim."
+      eyebrow={t("orders_eyebrow")}
+      title={t("orders_title")}
     >
       {store.bookings.length ? (
         <div className="flex flex-col gap-3">
@@ -75,7 +77,7 @@ export function Orders() {
                   {b.service}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  {b.date} às {b.slot} · {b.address}
+                  {b.date} · {b.slot} · {b.address}
                 </p>
                 <p className="mt-2 text-sm">
                   {b.payment} ·{" "}
@@ -87,7 +89,7 @@ export function Orders() {
                   >
                     {b.paymentStatus}
                   </span>
-                  {b.total ? ` · ${kz(b.total)}` : " · Orçamento"}
+                  {b.total ? ` · ${formatCurrency(b.total, store.currency)}` : ` · ${t("ticket_budget")}`}
                 </p>
                 {b.paymentReference && (
                   <p className="text-xs text-muted-foreground mt-1">
@@ -102,7 +104,7 @@ export function Orders() {
                     className="h-fit text-xs px-3 shadow-xs"
                     onClick={() => setPayBooking(b)}
                   >
-                    <Icon name="CreditCard" className="size-3.5" /> Pagar Agora
+                    <Icon name="CreditCard" className="size-3.5" /> {t("orders_pay_now")}
                   </Btn>
                 )}
                 {!["Cancelado", "Concluído", "Em curso"].includes(b.status) && (
@@ -111,7 +113,7 @@ export function Orders() {
                     className="h-fit text-xs"
                     onClick={() => cancel(b.id)}
                   >
-                    Cancelar
+                    {t("orders_cancel")}
                   </Btn>
                 )}
               </div>
@@ -121,10 +123,10 @@ export function Orders() {
       ) : (
         <Empty
           icon="ClipboardList"
-          title="Ainda não fez nenhum pedido"
-          text="Quando pedir um serviço, ele aparece aqui com número e estado."
+          title={t("orders_empty_title")}
+          text={t("orders_empty_text")}
         >
-          <Btn onClick={() => go("/servicos")}>Encontrar serviço</Btn>
+          <Btn onClick={() => go("/servicos")}>{t("orders_find_service")}</Btn>
         </Empty>
       )}
 
@@ -164,6 +166,7 @@ export function Orders() {
 
 export function Partner() {
   const [, setStore] = useStore();
+  const { t } = useI18n();
   const [form, setForm] = useState<{
     name: string;
     phone: string;
@@ -231,8 +234,8 @@ export function Partner() {
 
   return (
     <Section
-      eyebrow="Seja um profissional"
-      title="Transforme as suas competências em oportunidades."
+      eyebrow={t("partner_eyebrow")}
+      title={t("partner_title")}
     >
       <div className="grid max-w-3xl gap-5 @3xl:grid-cols-2">
         <Field label="Nome" error={errors.name}>
@@ -339,7 +342,7 @@ export function Partner() {
           />
         </Field>
         <div className="@3xl:col-span-2">
-          <Btn onClick={submit}>Quero ser parceiro</Btn>
+          <Btn onClick={submit}>{t("partner_banner_btn")}</Btn>
         </div>
       </div>
     </Section>
@@ -347,11 +350,12 @@ export function Partner() {
 }
 
 export function Business() {
+  const { t } = useI18n();
   const businessCat = CATEGORIES.find((c) => c.id === "business");
   return (
     <Section
-      eyebrow="Empresas"
-      title="A sua empresa também merece soluções mais simples."
+      eyebrow={t("business_eyebrow")}
+      title={t("business_title")}
     >
       <div className="grid gap-4 @3xl:grid-cols-3">
         {businessCat?.services.map((s) => (
@@ -367,52 +371,107 @@ export function Business() {
         ))}
       </div>
       <p className="mt-8 max-w-xl text-muted-foreground">
-        Contratos com faturação mensal, gestor de conta e níveis de serviço
-        acordados. Peça um orçamento em qualquer serviço acima.
+        {t("business_desc")}
       </p>
     </Section>
   );
 }
 
-export const About = () => (
-  <Section
-    eyebrow="Sobre nós"
-    title="Nascemos em Huambo para resolver o dia a dia."
-  >
-    <p className="max-w-2xl text-lg text-muted-foreground">
-      A Resolve Express liga pessoas, famílias e empresas a profissionais e
-      serviços de confiança. Equipa própria quando faz sentido, parceiros
-      verificados quando é preciso, e um pedido organizado sempre.
-    </p>
-  </Section>
-);
+export function About() {
+  const { t } = useI18n();
+  return (
+    <Section
+      eyebrow={t("about_eyebrow")}
+      title={t("about_title")}
+    >
+      <p className="max-w-2xl text-lg text-muted-foreground">
+        {t("about_desc")}
+      </p>
+    </Section>
+  );
+}
 
 export function Contacts() {
   const [store] = useStore();
+  const { t } = useI18n();
+  const support = getSupportContactInfo(store);
+  const waHref = waLink(support.whatsapp, support.whatsappDefault);
+
   return (
-    <Section eyebrow="Contactos" title="Fale connosco.">
-      <div className="grid max-w-2xl gap-3">
-        <p className="flex items-center gap-3">
-          <Icon name="MessageCircle" className="size-5 text-whatsapp" />{" "}
-          WhatsApp:{" "}
-          {store.whatsapp ? (
-            `+${store.whatsapp.replace(/\D/g, "")}`
-          ) : (
-            <span className="text-muted-foreground">
-              por configurar no painel
+    <Section eyebrow={t("contacts_eyebrow")} title={t("contacts_title")}>
+      <div className="grid max-w-3xl gap-4 @3xl:grid-cols-2">
+        <div className="rounded-[var(--radius)] border border-border bg-paper p-5 space-y-3 shadow-xs">
+          <p className="flex items-center gap-3 text-sm">
+            <Icon name="Phone" className="size-5 text-action shrink-0" />
+            <span>
+              <strong className="text-primary">{t("contacts_phone_label")}:</strong>{" "}
+              <a
+                href={`tel:${support.phone.replace(/[^\d+]/g, "")}`}
+                className="font-semibold text-primary hover:underline"
+              >
+                {support.phone}
+              </a>
             </span>
-          )}
-        </p>
-        <p className="flex items-center gap-3">
-          <Icon name="MapPin" className="size-5 text-action" /> Huambo, Angola
-        </p>
-        <p className="flex items-center gap-3">
-          <Icon name="Mail" className="size-5 text-primary" /> Email:{" "}
-          <span className="text-muted-foreground">
-            por configurar (serviço de email transacional)
-          </span>
-        </p>
+          </p>
+          <p className="flex items-center gap-3 text-sm">
+            <Icon name="MessageCircle" className="size-5 text-whatsapp shrink-0" />
+            <span>
+              <strong className="text-primary">{t("contacts_whatsapp_label")}:</strong>{" "}
+              +{support.whatsapp}
+            </span>
+          </p>
+          <p className="flex items-center gap-3 text-sm">
+            <Icon name="Mail" className="size-5 text-primary shrink-0" />
+            <span>
+              <strong className="text-primary">{t("contacts_email_label")}:</strong>{" "}
+              <a
+                href={`mailto:${support.email}`}
+                className="font-semibold text-primary hover:underline"
+              >
+                {support.email}
+              </a>
+            </span>
+          </p>
+        </div>
+
+        <div className="rounded-[var(--radius)] border border-border bg-paper p-5 space-y-3 shadow-xs">
+          <p className="flex items-center gap-3 text-sm">
+            <Icon name="Calendar" className="size-5 text-action shrink-0" />
+            <span>
+              <strong className="text-primary">{t("contacts_days_label")}:</strong>{" "}
+              {support.days}
+            </span>
+          </p>
+          <p className="flex items-center gap-3 text-sm">
+            <Icon name="Clock" className="size-5 text-action shrink-0" />
+            <span>
+              <strong className="text-primary">{t("contacts_hours_label")}:</strong>{" "}
+              {support.hours}
+            </span>
+          </p>
+          <p className="flex items-center gap-3 text-sm">
+            <Icon name="MapPin" className="size-5 text-action shrink-0" />
+            <span>
+              <strong className="text-primary">{t("contacts_location_label")}:</strong>{" "}
+              Huambo, Angola
+            </span>
+          </p>
+        </div>
       </div>
+
+      {waHref && (
+        <div className="mt-6">
+          <a
+            href={waHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded-[var(--radius)] bg-whatsapp px-5 py-3 text-sm font-bold text-white shadow-sm hover:brightness-105 transition"
+          >
+            <Icon name="MessageCircle" className="size-4" />
+            {t("contacts_chat_btn")}
+          </a>
+        </div>
+      )}
     </Section>
   );
 }
@@ -448,6 +507,7 @@ const formatFileBytes = (bytes?: number): string => {
 
 export function Legal({ k }: { k?: string }) {
   const [store] = useStore();
+  const { t } = useI18n();
   const activeDocs = (store.publicDocuments || []).filter((d) => d.active);
   const matchingDocs = k
     ? activeDocs.filter((d) => d.category === k)
@@ -500,7 +560,7 @@ export function Legal({ k }: { k?: string }) {
                         className="inline-flex items-center gap-1.5 rounded-[var(--radius)] bg-action px-4 py-2 text-xs font-bold text-action-ink hover:brightness-105 shadow-2xs"
                       >
                         <Icon name="ExternalLink" className="size-3.5" />
-                        Abrir
+                        {t("common_open")}
                       </a>
                       <a
                         href={safeUrl}
@@ -510,7 +570,7 @@ export function Legal({ k }: { k?: string }) {
                         className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-border bg-mist px-4 py-2 text-xs font-bold text-primary hover:bg-mist/80"
                       >
                         <Icon name="Download" className="size-3.5" />
-                        Descarregar
+                        {t("common_download")}
                       </a>
                     </div>
                   )}

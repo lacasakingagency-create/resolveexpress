@@ -53,7 +53,12 @@ export function getBaseSharedState(): Record<string, any> {
     disabledCats: {},
     overrides: {},
     whatsapp: "244923111222",
-    whatsappDefault: "244923111222",
+    whatsappDefault:
+      "Olá! Entrei em contacto através da Resolve Express e gostaria de solicitar informações sobre os serviços e produtos no Huambo.",
+    supportPhone: "+244 923 111 222",
+    supportEmail: "suporte@resolvemcx.ao",
+    supportDays: "Seg - Sáb",
+    supportHours: "07h às 19h",
     coupons: [
       {
         code: "BEMVINDO10",

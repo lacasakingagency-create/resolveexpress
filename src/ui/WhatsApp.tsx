@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { go } from "./kit";
-import { useStore, waLink } from "../lib/store";
+import { useStore, getSupportContactInfo, waLink } from "../lib/store";
+import { useI18n } from "../lib/i18n";
 
 const Logo = () => (
   <svg viewBox="0 0 32 32" className="size-8" fill="currentColor" aria-hidden={true}>
@@ -10,13 +11,14 @@ const Logo = () => (
 
 export function WhatsApp({ message }: { message?: string | null }) {
   const [store] = useStore();
+  const { t } = useI18n();
   const [showBubble, setShowBubble] = useState(false);
   const [showMissing, setShowMissing] = useState(false);
 
   useEffect(() => {
     if (sessionStorage.getItem("rex:bubble")) return;
-    const t = setTimeout(() => setShowBubble(true), 4000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setShowBubble(true), 4000);
+    return () => clearTimeout(timer);
   }, []);
 
   const close = () => {
@@ -24,7 +26,8 @@ export function WhatsApp({ message }: { message?: string | null }) {
     sessionStorage.setItem("rex:bubble", "1");
   };
 
-  const href = waLink(store.whatsapp, message || store.whatsappDefault);
+  const support = getSupportContactInfo(store);
+  const href = waLink(support.whatsapp, message || support.whatsappDefault);
 
   return (
     <div className="pointer-events-none fixed right-4 bottom-20 sm:bottom-4 z-50 flex flex-col items-end gap-3 @3xl:right-6 @3xl:bottom-6">
@@ -32,7 +35,7 @@ export function WhatsApp({ message }: { message?: string | null }) {
         <div className="wa-in pointer-events-auto relative max-w-64 rounded-[var(--radius)] bg-paper py-3 pr-10 pl-4 text-sm shadow-lg ring-1 ring-border">
           {showMissing ? (
             <>
-              O número de WhatsApp ainda não foi configurado.{" "}
+              {t("wa_missing")}{" "}
               <button
                 type="button"
                 className="font-semibold text-primary underline"
@@ -41,11 +44,11 @@ export function WhatsApp({ message }: { message?: string | null }) {
                   go("/admin");
                 }}
               >
-                Configurar no painel
+                {t("wa_config_btn")}
               </button>
             </>
           ) : (
-            <span className="font-semibold">Precisa de ajuda? Fale connosco!</span>
+            <span className="font-semibold">{t("wa_help_bubble")}</span>
           )}
           <button
             type="button"

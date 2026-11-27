@@ -89,6 +89,10 @@ const MIGRATABLE_ADMIN_KEYS = [
   "publicDocuments",
   "whatsapp",
   "whatsappDefault",
+  "supportPhone",
+  "supportEmail",
+  "supportDays",
+  "supportHours",
   "coupons",
   "contracts",
 ] as const;

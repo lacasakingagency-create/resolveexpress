@@ -13,8 +13,7 @@ import { useStore, svcConfig, nextBookingId, kz, type BookingRecord } from "../l
 import { AuthPromptModal } from "../ui/AuthPromptModal";
 import { PaymentCheckoutModal } from "../ui/PaymentCheckoutModal";
 import { isSupabaseConfigured, syncBookingToSupabaseStrict } from "../lib/supabase";
-
-const STEPS = ["Detalhes", "Local", "Data", "Pagamento", "Confirmar"];
+import { useI18n } from "../lib/i18n";
 
 const todayISO = () => {
   const d = new Date();
@@ -24,6 +23,14 @@ const todayISO = () => {
 
 export function Booking({ id }: { id: string }) {
   const [store, setStore] = useStore();
+  const { t } = useI18n();
+  const steps = [
+    t("book_step_need"),
+    t("book_step_where"),
+    t("book_step_when"),
+    t("book_payment"),
+    t("book_step_confirm"),
+  ];
   const svc = findService(id);
   const [step, setStep] = useState(0);
   const [bookingProvince, setBookingProvince] = useState(store.currentUser?.province || "Huambo");
@@ -72,8 +79,8 @@ export function Booking({ id }: { id: string }) {
   if (!svc) {
     return (
       <div className="mx-auto max-w-xl p-8">
-        <Empty title="Serviço não encontrado">
-          <Btn onClick={() => go("/servicos")}>Ver serviços</Btn>
+        <Empty title={t("cat_empty_title")}>
+          <Btn onClick={() => go("/servicos")}>{t("cat_view_services")}</Btn>
         </Empty>
       </div>
     );
@@ -292,7 +299,7 @@ export function Booking({ id }: { id: string }) {
           <Icon name="Check" className="size-10" />
         </div>
         <h1 className="font-display text-3xl font-black text-primary">
-          PEDIDO REGISTADO COM SUCESSO
+          {t("book_order_received")}
         </h1>
         <div className="ticket w-full rounded-[var(--radius)] bg-paper p-6 text-left shadow-lg ring-1 ring-border">
           <div className="flex justify-between items-start">
@@ -334,7 +341,7 @@ export function Booking({ id }: { id: string }) {
             className="w-full min-h-12 shadow-md"
             onClick={() => setPaymentModalOpen(true)}
           >
-            <Icon name="CreditCard" className="size-5" /> Abrir Checkout / Pagar Agora ({kz(done.total)})
+            <Icon name="CreditCard" className="size-5" /> {t("book_pay_now")} ({kz(done.total)})
           </Btn>
         )}
 
@@ -344,10 +351,10 @@ export function Booking({ id }: { id: string }) {
 
         <div className="flex flex-wrap justify-center gap-3">
           <Btn kind="ink" onClick={() => go("/pedidos")}>
-            Acompanhar nos Meus Pedidos
+            {t("book_track_order")}
           </Btn>
           <Btn kind="ghost" onClick={() => go("/")}>
-            Voltar ao início
+            {t("book_back_home")}
           </Btn>
         </div>
 
@@ -438,10 +445,10 @@ export function Booking({ id }: { id: string }) {
                   </span>
                   <div>
                     <p className="font-display font-bold text-sm text-primary">
-                      Atenção: É necessário criar conta de cliente para solicitar este serviço
+                      {t("book_unauth_warn")}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      O seu pedido fica protegido, registrado e associado ao seu histórico no Portal do Cliente.
+                      {t("book_unauth_sub")}
                     </p>
                   </div>
                 </div>
@@ -450,13 +457,13 @@ export function Booking({ id }: { id: string }) {
                   className="text-xs min-h-9 px-4 whitespace-nowrap self-end sm:self-auto cursor-pointer"
                   onClick={() => setAuthModalOpen(true)}
                 >
-                  Criar Conta de Cliente Grátis
+                  {t("book_create_account_btn")}
                 </Btn>
               </div>
             )}
 
             <ol className="mt-8 flex gap-1 overflow-x-auto">
-              {STEPS.map((label, idx) => (
+              {steps.map((label, idx) => (
                 <li key={label} className="min-w-20 flex-1">
                   <div
                     className={
@@ -481,7 +488,7 @@ export function Booking({ id }: { id: string }) {
             <div key={step} className="step-in mt-6 flex flex-col gap-5">
               {step === 0 && (
                 <>
-                  <Field label={`Quantidade (${svc.unit})`} error={errors.qty}>
+                  <Field label={`${t("book_qty_hours")} (${svc.unit})`} error={errors.qty}>
                     <input
                       type="number"
                       min={1}
@@ -492,9 +499,8 @@ export function Booking({ id }: { id: string }) {
                     />
                   </Field>
                   <Field
-                    label="O que precisa?"
+                    label={t("book_what_need")}
                     error={errors.details}
-                    hint="Quanto mais detalhe, mais rápido confirmamos."
                   >
                     <textarea
                       rows={4}
@@ -505,11 +511,10 @@ export function Booking({ id }: { id: string }) {
                     />
                   </Field>
                   <Field
-                    label="Fotografias (opcional)"
-                    hint="Ajudam a orçamentar. Máx. 4."
+                    label={t("book_photos")}
                   >
                     <FilePick
-                      label="Escolher fotografias"
+                      label={t("book_photos")}
                       multiple
                       accept="image/*"
                       files={form.photos}
@@ -522,7 +527,7 @@ export function Booking({ id }: { id: string }) {
               {step === 1 && (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <Field label="Província (Angola)">
+                    <Field label={t("book_province")}>
                       <select
                         value={bookingProvince}
                         onChange={(e) => {
@@ -545,7 +550,7 @@ export function Booking({ id }: { id: string }) {
                       </select>
                     </Field>
 
-                    <Field label="Município">
+                    <Field label={t("book_municipality")}>
                       <select
                         value={bookingMunicipio}
                         onChange={(e) => setBookingMunicipio(e.target.value)}
@@ -560,7 +565,7 @@ export function Booking({ id }: { id: string }) {
                     </Field>
                   </div>
 
-                  <Field label="Bairro" error={errors.bairro}>
+                  <Field label={t("book_bairro")} error={errors.bairro}>
                     <input
                       value={form.bairro}
                       onChange={set("bairro")}
@@ -568,7 +573,7 @@ export function Booking({ id }: { id: string }) {
                       placeholder="Ex.: Cidade Alta, São João, Maianga..."
                     />
                   </Field>
-                  <Field label="Rua, número ou casa" error={errors.street}>
+                  <Field label={t("book_street")} error={errors.street}>
                     <input
                       value={form.street}
                       onChange={set("street")}
@@ -576,7 +581,7 @@ export function Booking({ id }: { id: string }) {
                       placeholder="Ex.: Rua Direita do Comércio nº 12"
                     />
                   </Field>
-                  <Field label="Ponto de referência (opcional)">
+                  <Field label={t("book_ref")}>
                     <input
                       value={form.ref}
                       onChange={set("ref")}
@@ -589,7 +594,7 @@ export function Booking({ id }: { id: string }) {
 
               {step === 2 && (
                 <>
-                  <Field label="Data" error={errors.date}>
+                  <Field label={t("book_date")} error={errors.date}>
                     <input
                       type="date"
                       min={todayISO()}
@@ -598,7 +603,7 @@ export function Booking({ id }: { id: string }) {
                       className={inputCls + " w-56"}
                     />
                   </Field>
-                  <Field label="Horário" error={errors.slot}>
+                  <Field label={t("book_time")} error={errors.slot}>
                     <div className="grid grid-cols-3 gap-2 @md:grid-cols-6">
                       {SLOTS.map((sl) => {
                         const past =
@@ -623,7 +628,7 @@ export function Booking({ id }: { id: string }) {
                       })}
                     </div>
                   </Field>
-                  <Field label="Repetir">
+                  <Field label={t("book_recurrence")}>
                     <div className="flex flex-wrap gap-2">
                       {[
                         ["none", "Só uma vez"],
@@ -652,7 +657,7 @@ export function Booking({ id }: { id: string }) {
               )}
 
               {step === 3 && (
-                <Field label="Como prefere pagar?" error={errors.payment}>
+                <Field label={t("book_payment")} error={errors.payment}>
                   <div className="flex flex-col gap-2.5">
                     {PAYMENTS.map((p) => {
                       const isSelected = form.payment === p.id;
@@ -712,7 +717,7 @@ export function Booking({ id }: { id: string }) {
 
               {step === 4 && (
                 <>
-                  <Field label="Nome" error={errors.name}>
+                  <Field label={t("book_name")} error={errors.name}>
                     <input
                       value={form.name}
                       onChange={set("name")}
@@ -720,7 +725,7 @@ export function Booking({ id }: { id: string }) {
                       autoComplete="name"
                     />
                   </Field>
-                  <Field label="Telefone" error={errors.phone}>
+                  <Field label={t("book_phone")} error={errors.phone}>
                     <div className="flex">
                       <span className="grid place-items-center rounded-l-[var(--radius)] border border-r-0 border-border bg-mist px-3 text-sm font-semibold">
                         +244
@@ -786,16 +791,16 @@ export function Booking({ id }: { id: string }) {
                     setStep(step - 1);
                   }}
                 >
-                  Voltar
+                  {t("book_back")}
                 </Btn>
               )}
               {step < 4 ? (
                 <Btn onClick={next}>
-                  Continuar <Icon name="ArrowRight" className="size-4" />
+                  {t("book_next")} <Icon name="ArrowRight" className="size-4" />
                 </Btn>
               ) : (
                 <Btn onClick={confirm} disabled={isSubmittingBooking}>
-                  {isSubmittingBooking ? "A registar pedido..." : "Confirmar pedido"}
+                  {isSubmittingBooking ? "..." : t("book_confirm")}
                 </Btn>
               )}
             </div>
@@ -814,7 +819,7 @@ export function Booking({ id }: { id: string }) {
       <aside className="h-fit @5xl:sticky @5xl:top-28">
         <div className="ticket rounded-[var(--radius)] bg-paper p-5 shadow-[0_16px_40px_oklch(0.2_0.06_258/0.12)] ring-1 ring-border">
           <div className="flex justify-between font-mono text-sm text-muted-foreground">
-            <span>RESUMO</span>
+            <span>{t("book_summary_title")}</span>
             <span>{nextBookingId(store.seq + 1)}</span>
           </div>
           <div className="my-4 border-t-2 border-dashed border-border" />

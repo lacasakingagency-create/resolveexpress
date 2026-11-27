@@ -3,6 +3,7 @@ import { useRoute, Icon } from "./ui/kit";
 import { Header, Footer } from "./ui/Chrome";
 import { findService, findCategory } from "./lib/data";
 import { useStore } from "./lib/store";
+import { useI18n } from "./lib/i18n";
 import { WhatsApp } from "./ui/WhatsApp";
 import { ResolveAI } from "./ui/ResolveAI";
 import { MobileTabBar } from "./ui/MobileTabBar";
@@ -41,6 +42,7 @@ import { ProtectedRoute } from "./lib/ProtectedRoute";
 function AppContent() {
   const route = useRoute();
   const [store, updateStore] = useStore();
+  const { t } = useI18n();
   const [showAI, setShowAI] = useState(false);
   const [path, query] = route.split("?");
   const parts = path.split("/").filter(Boolean);
@@ -302,7 +304,7 @@ function AppContent() {
               RESOLVE AI
             </span>
             <span className="block text-[11px] text-white/70 mt-0.5">
-              Ajuda inteligente Huambo
+              {t("nav_ai_hint")}
             </span>
           </div>
         </button>

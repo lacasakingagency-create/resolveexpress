@@ -465,7 +465,7 @@ export function ImportAdminSection() {
                   className={inputCls}
                 />
                 <p className="text-[10px] text-muted-foreground mt-0.5">
-                  Convertido a taxa referencial 950 Kz/USD = {kz(quotePriceUSD * 950)}
+                  Convertido a taxa referencial 950 Kz/USD = {formatCurrency(quotePriceUSD * 950, "AOA")}
                 </p>
               </div>
 

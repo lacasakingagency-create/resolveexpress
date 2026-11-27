@@ -1,5 +1,6 @@
 import React, { useEffect } from "react";
 import { Icon, go, Btn } from "./kit";
+import { useI18n } from "../lib/i18n";
 
 export interface AuthPromptModalProps {
   open: boolean;
@@ -14,6 +15,7 @@ export function AuthPromptModal({
   actionType = "general",
   itemName,
 }: AuthPromptModalProps) {
+  const { t } = useI18n();
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -42,7 +44,7 @@ export function AuthPromptModal({
           type="button"
           onClick={onClose}
           className="absolute right-4 top-4 grid size-9 place-items-center rounded-full text-muted-foreground hover:bg-mist hover:text-primary transition"
-          aria-label="Fechar"
+          aria-label={t("common_close")}
         >
           <Icon name="X" className="size-5" />
         </button>
@@ -57,14 +59,14 @@ export function AuthPromptModal({
           </span>
           <div>
             <span className="inline-block rounded-full bg-action/10 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-action">
-              Identificação Necessária
+              {t("auth_modal_badge")}
             </span>
             <h2 className="font-display text-xl sm:text-2xl font-black text-primary leading-tight mt-0.5">
               {isBuy
-                ? "Criar Conta para Comprar"
+                ? t("auth_modal_buy_title")
                 : isService
-                ? "Criar Conta para Solicitar Serviço"
-                : "Acesso de Cliente Necessário"}
+                ? t("auth_modal_service_title")
+                : t("auth_modal_general_title")}
             </h2>
           </div>
         </div>
@@ -113,7 +115,7 @@ export function AuthPromptModal({
             }}
           >
             <Icon name="UserPlus" className="size-4" />
-            <span>Criar Conta de Cliente Grátis</span>
+            <span>{t("auth_modal_create_btn")}</span>
           </Btn>
 
           <button
@@ -125,7 +127,7 @@ export function AuthPromptModal({
             className="w-full rounded-[var(--radius)] border border-border bg-paper py-3 text-xs sm:text-sm font-bold text-primary hover:bg-mist transition flex items-center justify-center gap-2 cursor-pointer"
           >
             <Icon name="LogIn" className="size-4 text-action" />
-            <span>Já tenho uma conta? Iniciar Sessão</span>
+            <span>{t("auth_modal_has_account")}</span>
           </button>
         </div>
 
@@ -134,7 +136,7 @@ export function AuthPromptModal({
           onClick={onClose}
           className="mt-4 w-full text-center text-xs font-semibold text-muted-foreground hover:text-primary transition cursor-pointer"
         >
-          Continuar apenas a ver o catálogo
+          {t("auth_modal_browse")}
         </button>
       </div>
     </div>

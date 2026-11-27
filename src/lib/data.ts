@@ -1029,6 +1029,8 @@ export interface HeroBanner {
   footerText?: string;
   image: string;
   imageFit?: "cover" | "contain";
+  mobileImage?: string;
+  mobileImageFit?: "cover" | "contain";
   active?: boolean;
   // Controlos de Visibilidade pelo Super Admin
   showEyebrow?: boolean;

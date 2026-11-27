@@ -11,6 +11,7 @@ import { LOCATIONS, ANGOLA_PROVINCES } from "../lib/data";
 import { useAuth, getDashboardRouteForRole } from "../lib/AuthContext";
 import type { SupabaseProfileDiagnostics } from "../lib/supabase";
 import { ProfileDiagnosticsBox } from "../ui/ProfileDiagnosticsBox";
+import { useI18n } from "../lib/i18n";
 
 type AuthTab = "register" | "login";
 
@@ -22,6 +23,7 @@ export function Auth({
   mode?: string;
 }) {
   const [store, setStore] = useStore();
+  const { t } = useI18n();
   const {
     isConfigured,
     configDiagnostics,
@@ -698,26 +700,26 @@ export function Auth({
             >
               Ir para o Meu Ambiente <Icon name="ArrowRight" className="size-4" />
             </Btn>
-            <button
-              type="button"
-              onClick={async () => {
-                await signOut();
-              }}
-              className="px-3 py-2 text-xs font-bold text-red-600 hover:underline cursor-pointer"
-            >
-              Sair
-            </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  await signOut();
+                }}
+                className="px-3 py-2 text-xs font-bold text-red-600 hover:underline cursor-pointer"
+              >
+                {t("nav_logout")}
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
       {/* CABEÇALHO DA CENTRAL DE ACESSO */}
       <div className="text-center mb-8">
         <p className="font-display text-xs sm:text-sm font-bold uppercase tracking-widest text-action mb-2">
-          Resolve Express · Huambo, Angola
+          {t("auth_subtitle")}
         </p>
         <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-black text-primary">
-          {tab === "register" ? "Criar Conta de Cliente" : "Iniciar Sessão"}
+          {tab === "register" ? t("auth_create_title") : t("auth_login_title")}
         </h1>
         <p className="mx-auto mt-2 max-w-xl text-muted-foreground text-sm sm:text-base">
           {tab === "register"
@@ -738,7 +740,7 @@ export function Auth({
             }
           >
             <Icon name="UserPlus" className="size-4" />
-            <span>Criar Conta de Cliente</span>
+            <span>{t("auth_tab_register")}</span>
           </button>
           <button
             type="button"
@@ -751,7 +753,7 @@ export function Auth({
             }
           >
             <Icon name="LogIn" className="size-4" />
-            <span>Entrar na Conta</span>
+            <span>{t("auth_tab_login")}</span>
           </button>
         </div>
       </div>

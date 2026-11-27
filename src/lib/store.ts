@@ -400,6 +400,10 @@ export interface StoreState {
   language: LanguageCode;
   whatsapp: string;
   whatsappDefault: string;
+  supportPhone: string;
+  supportEmail: string;
+  supportDays: string;
+  supportHours: string;
   location: string;
   subscriptionPlan: "free" | "family" | "premium" | "business";
 
@@ -561,9 +565,13 @@ const initial: StoreState = {
   publicDocuments: [],
   currency: "AOA",
   language: "PT",
-  whatsapp: "",
+  whatsapp: "244923111222",
   whatsappDefault:
     "Olá! Entrei em contacto através da Resolve Express e gostaria de solicitar informações sobre os serviços e produtos no Huambo.",
+  supportPhone: "+244 923 111 222",
+  supportEmail: "suporte@resolvemcx.ao",
+  supportDays: "Seg - Sáb",
+  supportHours: "07h às 19h",
   location: "huambo",
   subscriptionPlan: "free",
 
@@ -1209,6 +1217,10 @@ const SHARED_KEYS = [
   "overrides",
   "whatsapp",
   "whatsappDefault",
+  "supportPhone",
+  "supportEmail",
+  "supportDays",
+  "supportHours",
   "coupons",
   "contracts",
   "registeredPartners",
@@ -1432,10 +1444,18 @@ export const applyServerStateUpdates = (serverState: any) => {
     if (Array.isArray(nextState.heroBanners)) {
       let bannersChanged = false;
       const resolvedBanners = nextState.heroBanners.map((b) => {
-        const resolved = resolvePublicRefUrl(refs, `heroBanner:${b.id}`, b.image);
-        if (resolved && resolved !== b.image) {
+        const resolvedDesktop = resolvePublicRefUrl(refs, `heroBanner:${b.id}`, b.image);
+        const resolvedMobile = resolvePublicRefUrl(refs, `heroBanner:${b.id}:mobile`, b.mobileImage);
+        const nextImage = resolvedDesktop && resolvedDesktop !== b.image ? resolvedDesktop : b.image;
+        const nextMobileImage =
+          resolvedMobile && resolvedMobile !== b.mobileImage ? resolvedMobile : b.mobileImage;
+        if (nextImage !== b.image || nextMobileImage !== b.mobileImage) {
           bannersChanged = true;
-          return { ...b, image: resolved };
+          return {
+            ...b,
+            image: nextImage,
+            ...(nextMobileImage ? { mobileImage: nextMobileImage } : {}),
+          };
         }
         return b;
       });
@@ -1741,7 +1761,20 @@ if (typeof window !== "undefined") {
   });
 }
 
+const syncDocumentLang = (lang?: LanguageCode) => {
+  if (typeof document === "undefined") return;
+  const code = (lang || "PT").toLowerCase();
+  if (document.documentElement.lang !== code) {
+    document.documentElement.lang = code;
+  }
+};
+
+if (typeof document !== "undefined") {
+  syncDocumentLang(state.language);
+}
+
 const emit = () => {
+  syncDocumentLang(state.language);
   saveToLocalStorageSafely(state);
   listeners.forEach((fn) => fn(state));
   syncSharedStateToServer(state);
@@ -1921,8 +1954,9 @@ const CURRENCY_RATES: Record<CurrencyCode, { symbol: string; rate: number }> = {
 };
 
 export const formatCurrency = (valAOA: number, currency: CurrencyCode = "AOA"): string => {
+  const safeVal = Number.isFinite(Number(valAOA)) ? Number(valAOA) : 0;
   const c = CURRENCY_RATES[currency] || CURRENCY_RATES.AOA;
-  const converted = valAOA * c.rate;
+  const converted = safeVal * c.rate;
   if (currency === "AOA") {
     return new Intl.NumberFormat("pt-AO", { maximumFractionDigits: 0 }).format(converted) + " Kz";
   }
@@ -1933,7 +1967,23 @@ export const formatCurrency = (valAOA: number, currency: CurrencyCode = "AOA"): 
   }).format(converted);
 };
 
-export const kz = (v: number) => formatCurrency(v, "AOA");
+export const kz = (v: number) => formatCurrency(v, state.currency || "AOA");
+
+export const getSupportContactInfo = (s: Pick<StoreState, "whatsapp" | "whatsappDefault" | "supportPhone" | "supportEmail" | "supportDays" | "supportHours">) => {
+  const rawWhatsapp = (s.whatsapp || "").replace(/\D/g, "");
+  const rawSupportDigits = (s.supportPhone || "").replace(/\D/g, "");
+  const phone =
+    (s.supportPhone && s.supportPhone.trim()) ||
+    (rawWhatsapp ? `+${rawWhatsapp}` : "+244 923 111 222");
+  const whatsapp = rawWhatsapp || rawSupportDigits || "244923111222";
+  const email = (s.supportEmail && s.supportEmail.trim()) || "suporte@resolvemcx.ao";
+  const days = (s.supportDays && s.supportDays.trim()) || "Seg - Sáb";
+  const hours = (s.supportHours && s.supportHours.trim()) || "07h às 19h";
+  const whatsappDefault =
+    (s.whatsappDefault && s.whatsappDefault.trim()) ||
+    "Olá! Entrei em contacto através da Resolve Express e gostaria de solicitar informações.";
+  return { phone, whatsapp, email, days, hours, whatsappDefault };
+};
 
 export const waLink = (phone: string, text: string) =>
   phone

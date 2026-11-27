@@ -196,8 +196,21 @@ export function Admin({ initialTab }: { initialTab?: string }) {
     );
   }
 
-  const [phone, setPhone] = useState(store.whatsapp);
-  const [msg, setMsg] = useState(store.whatsappDefault);
+  const [phone, setPhone] = useState(store.whatsapp || "244923111222");
+  const [msg, setMsg] = useState(store.whatsappDefault || "");
+  const [supportPhoneInput, setSupportPhoneInput] = useState(
+    store.supportPhone || "+244 923 111 222"
+  );
+  const [supportEmailInput, setSupportEmailInput] = useState(
+    store.supportEmail || "suporte@resolvemcx.ao"
+  );
+  const [supportDaysInput, setSupportDaysInput] = useState(
+    store.supportDays || "Seg - Sáb"
+  );
+  const [supportHoursInput, setSupportHoursInput] = useState(
+    store.supportHours || "07h às 19h"
+  );
+  const [configDirty, setConfigDirty] = useState(false);
   const [commissionInput, setCommissionInput] = useState(store.partnerWallet.commissionRate);
   const [saved, setSaved] = useState(false);
   const [logoInput, setLogoInput] = useState(store.customLogo || "");
@@ -241,6 +254,27 @@ export function Admin({ initialTab }: { initialTab?: string }) {
       setLogoInput(store.customLogo || "");
     }
   }, [store.customLogo, logoDirty]);
+
+  useEffect(() => {
+    if (!configDirty) {
+      setPhone(store.whatsapp || "244923111222");
+      setMsg(store.whatsappDefault || "");
+      setSupportPhoneInput(store.supportPhone || "+244 923 111 222");
+      setSupportEmailInput(store.supportEmail || "suporte@resolvemcx.ao");
+      setSupportDaysInput(store.supportDays || "Seg - Sáb");
+      setSupportHoursInput(store.supportHours || "07h às 19h");
+      setCommissionInput(store.partnerWallet.commissionRate);
+    }
+  }, [
+    store.whatsapp,
+    store.whatsappDefault,
+    store.supportPhone,
+    store.supportEmail,
+    store.supportDays,
+    store.supportHours,
+    store.partnerWallet.commissionRate,
+    configDirty,
+  ]);
 
   const [catId, setCatId] = useState(CATEGORIES[0].id);
 
@@ -304,6 +338,10 @@ export function Admin({ initialTab }: { initialTab?: string }) {
   const [heroFormImage, setHeroFormImage] = useState("");
   const [heroFormAssetRef, setHeroFormAssetRef] = useState<AssetReference | null>(null);
   const [heroFormImageFit, setHeroFormImageFit] = useState<"cover" | "contain">("cover");
+  const [heroFormMobileImage, setHeroFormMobileImage] = useState("");
+  const [heroFormMobileAssetRef, setHeroFormMobileAssetRef] = useState<AssetReference | null>(null);
+  const [heroFormMobileImageFit, setHeroFormMobileImageFit] = useState<"cover" | "contain">("cover");
+  const [heroCardPreviewMode, setHeroCardPreviewMode] = useState<Record<string, "desktop" | "mobile">>({});
   const [newSvcAssetRef, setNewSvcAssetRef] = useState<AssetReference | null>(null);
   const [editSvcAssetRef, setEditSvcAssetRef] = useState<AssetReference | null>(null);
   const [deptAssetRef, setDeptAssetRef] = useState<AssetReference | null>(null);
@@ -320,6 +358,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
 
   const openAddHeroBanner = () => {
     setEditingHeroBanner(null);
+    setHeroFormError(null);
     setHeroFormEyebrow("Serviços ao Domicílio");
     setHeroFormBadge("Huambo · Equipa Verificada");
     setHeroFormTitleStart("Cuidamos de tudo para ");
@@ -331,7 +370,11 @@ export function Admin({ initialTab }: { initialTab?: string }) {
     setHeroFormSecondaryTo("/produtos");
     setHeroFormFooterText("Atendimento rápido ao domicílio em toda a província do Huambo");
     setHeroFormImage("https://images.unsplash.com/photo-1581578731548-c64695cc6952?q=85&w=1920&auto=format&fit=crop");
+    setHeroFormAssetRef(null);
     setHeroFormImageFit("cover");
+    setHeroFormMobileImage("");
+    setHeroFormMobileAssetRef(null);
+    setHeroFormMobileImageFit("cover");
     setHeroFormActive(true);
     setHeroFormShowEyebrow(true);
     setHeroFormShowBadge(true);
@@ -346,6 +389,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
 
   const openEditHeroBanner = (b: HeroBanner) => {
     setEditingHeroBanner(b);
+    setHeroFormError(null);
     setHeroFormEyebrow(b.eyebrow || "");
     setHeroFormBadge(b.badge || "");
     setHeroFormTitleStart(b.titleStart || "");
@@ -357,7 +401,11 @@ export function Admin({ initialTab }: { initialTab?: string }) {
     setHeroFormSecondaryTo(b.secondaryTo || "");
     setHeroFormFooterText(b.footerText || "");
     setHeroFormImage(b.image || "");
+    setHeroFormAssetRef(null);
     setHeroFormImageFit(b.imageFit || "cover");
+    setHeroFormMobileImage(b.mobileImage || "");
+    setHeroFormMobileAssetRef(null);
+    setHeroFormMobileImageFit(b.mobileImageFit || "cover");
     setHeroFormActive(b.active !== false);
     setHeroFormShowEyebrow(b.showEyebrow !== false);
     setHeroFormShowBadge(b.showBadge !== false);
@@ -372,8 +420,10 @@ export function Admin({ initialTab }: { initialTab?: string }) {
 
   const handleSaveHeroBanner = async () => {
     setHeroFormError(null);
-    if (!heroFormImage.trim()) {
-      setHeroFormError("Por favor, carregue ou insira o link de uma imagem válida para o banner antes de gravar.");
+    const desktopImg = heroFormImage.trim();
+    const mobileImg = heroFormMobileImage.trim();
+    if (!desktopImg && !mobileImg) {
+      setHeroFormError("Por favor, carregue ou insira o link de uma imagem (computador ou celular) antes de gravar.");
       return;
     }
 
@@ -388,8 +438,10 @@ export function Admin({ initialTab }: { initialTab?: string }) {
       secondaryBtn: heroFormSecondaryBtn.trim() || "Contactar",
       secondaryTo: heroFormSecondaryTo.trim() || "/contactos",
       footerText: heroFormFooterText.trim(),
-      image: heroFormImage.trim(),
+      image: desktopImg || mobileImg,
       imageFit: heroFormImageFit,
+      mobileImage: mobileImg,
+      mobileImageFit: heroFormMobileImageFit,
       active: heroFormActive,
       showEyebrow: heroFormShowEyebrow,
       showBadge: heroFormShowBadge,
@@ -404,12 +456,20 @@ export function Admin({ initialTab }: { initialTab?: string }) {
     let ok = false;
     if (editingHeroBanner) {
       const oldImage = editingHeroBanner.image;
+      const oldMobileImage = editingHeroBanner.mobileImage;
       ok = await executeAdminSave(
         (st) => {
           const list = st.heroBanners && st.heroBanners.length > 0 ? st.heroBanners : DEFAULT_HERO_BANNERS;
           const nextRefs = { ...(st.assetRefs || {}) };
           if (heroFormAssetRef) {
             nextRefs[`heroBanner:${editingHeroBanner.id}`] = heroFormAssetRef;
+          } else if (!desktopImg) {
+            delete nextRefs[`heroBanner:${editingHeroBanner.id}`];
+          }
+          if (heroFormMobileAssetRef) {
+            nextRefs[`heroBanner:${editingHeroBanner.id}:mobile`] = heroFormMobileAssetRef;
+          } else if (!mobileImg) {
+            delete nextRefs[`heroBanner:${editingHeroBanner.id}:mobile`];
           }
           return {
             heroBanners: list.map((b: HeroBanner) =>
@@ -426,8 +486,11 @@ export function Admin({ initialTab }: { initialTab?: string }) {
         "Atualização de Banner da Hero",
         `Banner modificado: ${bannerPayload.titleStart} ${bannerPayload.titleHighlight}`
       );
-      if (ok && oldImage && oldImage !== bannerPayload.image) {
+      if (ok && oldImage && oldImage !== bannerPayload.image && oldImage !== bannerPayload.mobileImage) {
         await safeReplaceImage(oldImage, bannerPayload.image);
+      }
+      if (ok && oldMobileImage && oldMobileImage !== bannerPayload.mobileImage && oldMobileImage !== bannerPayload.image) {
+        await safeReplaceImage(oldMobileImage, bannerPayload.mobileImage || "");
       }
     } else {
       const newId = `hero-${Date.now()}`;
@@ -442,6 +505,9 @@ export function Admin({ initialTab }: { initialTab?: string }) {
           if (heroFormAssetRef) {
             nextRefs[`heroBanner:${newId}`] = heroFormAssetRef;
           }
+          if (heroFormMobileAssetRef) {
+            nextRefs[`heroBanner:${newId}:mobile`] = heroFormMobileAssetRef;
+          }
           return { heroBanners: [...list, newBanner], assetRefs: nextRefs };
         },
         "Criação de Novo Banner da Hero",
@@ -451,6 +517,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
 
     if (ok) {
       setHeroFormAssetRef(null);
+      setHeroFormMobileAssetRef(null);
       setHeroFormError(null);
       setShowAddHeroBanner(false);
       setEditingHeroBanner(null);
@@ -467,6 +534,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
           const filtered = l.filter((b: HeroBanner) => b.id !== id);
           const nextRefs = { ...(st.assetRefs || {}) };
           delete nextRefs[`heroBanner:${id}`];
+          delete nextRefs[`heroBanner:${id}:mobile`];
           return {
             heroBanners: filtered.length > 0 ? filtered : DEFAULT_HERO_BANNERS,
             assetRefs: nextRefs,
@@ -477,6 +545,9 @@ export function Admin({ initialTab }: { initialTab?: string }) {
       );
       if (ok && targetBanner?.image) {
         await safeReplaceImage(targetBanner.image, "");
+      }
+      if (ok && targetBanner?.mobileImage && targetBanner.mobileImage !== targetBanner.image) {
+        await safeReplaceImage(targetBanner.mobileImage, "");
       }
     }
   };
@@ -745,6 +816,10 @@ export function Admin({ initialTab }: { initialTab?: string }) {
   const [replyText, setReplyText] = useState("");
 
   const validPhone = /^\d{9,15}$/.test(phone.replace(/\D/g, "")) || phone === "";
+  const validSupportPhone = /^\d{9,15}$/.test(supportPhoneInput.replace(/\D/g, ""));
+  const validSupportEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmailInput.trim());
+  const validSupportDays = supportDaysInput.trim().length >= 3;
+  const validSupportHours = supportHoursInput.trim().length >= 3;
 
   const setO = async (id: string, patch: any) =>
     await executeAdminSave(
@@ -2052,6 +2127,18 @@ export function Admin({ initialTab }: { initialTab?: string }) {
               const showFooter = banner.showFooterText !== false && Boolean(banner.footerText);
               const hasAny = (showEyebrow || showBadge) || showTitle || showDesc || showButtonsContainer || showFooter;
 
+              const hasMobileImage = Boolean(banner.mobileImage?.trim());
+              const previewMode =
+                hasMobileImage && heroCardPreviewMode[banner.id] === "mobile" ? "mobile" : "desktop";
+              const previewImgSrc =
+                previewMode === "mobile"
+                  ? banner.mobileImage!.trim()
+                  : banner.image?.trim() || "https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&w=1600&q=80";
+              const previewFit =
+                previewMode === "mobile"
+                  ? banner.mobileImageFit || banner.imageFit
+                  : banner.imageFit;
+
               return (
                 <div
                   key={banner.id}
@@ -2065,10 +2152,10 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     {/* Live Slide Preview */}
                     <div className="relative lg:col-span-6 xl:col-span-7 bg-neutral-900 min-h-[220px] sm:min-h-[260px] flex items-center overflow-hidden">
                       <img
-                        src={banner.image?.trim() || "https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&w=1600&q=80"}
+                        src={previewImgSrc}
                         alt={banner.titleStart}
                         className={`absolute inset-0 h-full w-full ${
-                          banner.imageFit === "contain"
+                          previewFit === "contain"
                             ? "object-contain p-4"
                             : "object-cover object-center"
                         }`}
@@ -2140,9 +2227,41 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                         </div>
                       )}
 
-                      <span className="absolute top-3 right-3 z-10 rounded-full bg-black/70 px-2.5 py-0.5 text-[10px] font-mono font-bold text-white/90 backdrop-blur-xs">
-                        Slide #{index + 1}
-                      </span>
+                      <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5">
+                        {hasMobileImage && (
+                          <div className="inline-flex items-center rounded-full bg-black/75 p-0.5 backdrop-blur-xs border border-white/15">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setHeroCardPreviewMode((prev) => ({ ...prev, [banner.id]: "desktop" }))
+                              }
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition cursor-pointer ${
+                                previewMode === "desktop"
+                                  ? "bg-action text-white"
+                                  : "text-white/75 hover:text-white"
+                              }`}
+                            >
+                              Computador
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setHeroCardPreviewMode((prev) => ({ ...prev, [banner.id]: "mobile" }))
+                              }
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition cursor-pointer ${
+                                previewMode === "mobile"
+                                  ? "bg-action text-white"
+                                  : "text-white/75 hover:text-white"
+                              }`}
+                            >
+                              Celular
+                            </button>
+                          </div>
+                        )}
+                        <span className="rounded-full bg-black/70 px-2.5 py-0.5 text-[10px] font-mono font-bold text-white/90 backdrop-blur-xs">
+                          Slide #{index + 1}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Controls & Details */}
@@ -2195,6 +2314,15 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                               Nota: {showFooter ? "Visível" : "Oculta"}
                             </span>
                           )}
+                          <span
+                            className={`px-2 py-0.5 rounded-md font-semibold border ${
+                              hasMobileImage
+                                ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                                : "bg-neutral-100 text-neutral-600 border-neutral-200"
+                            }`}
+                          >
+                            {hasMobileImage ? "Computador + Celular" : "Computador (imagem única)"}
+                          </span>
                         </div>
 
                         <div className="text-xs space-y-1.5 text-muted-foreground">
@@ -4229,44 +4357,194 @@ export function Admin({ initialTab }: { initialTab?: string }) {
             </div>
           </div>
 
-          {/* Card 3: WhatsApp Business & Operações */}
+          {/* Card 3: Contacto de Suporte, Horários, Email & Operações */}
           <div className="rounded-[var(--radius)] border border-border bg-paper p-6 space-y-5">
             <div className="border-b border-border/80 pb-3">
               <span className="inline-block text-[11px] font-bold uppercase tracking-wider text-action font-mono">
-                WHATSAPP_BUSINESS_NUMBER & OPERAÇÕES
+                SUPORTE_ATENDIMENTO & OPERAÇÕES
               </span>
               <h3 className="font-display text-lg font-black text-primary">
-                Configurações Operacionais & Atendimento
+                Contacto de Suporte, Dias, Horários, E-mail & Atendimento
               </h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                Estes dados atualizam em tempo real o cabeçalho, rodapé, página de contactos e WhatsApp para todos os utilizadores.
+              </p>
             </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field
+                label="Contacto de Suporte (Telefone Visível)"
+                error={
+                  !validSupportPhone && "Indique um contacto válido (ex.: +244 923 111 222)."
+                }
+                hint="Exibido na barra superior, rodapé e página de contactos."
+              >
+                <div className="flex gap-2">
+                  <input
+                    value={supportPhoneInput}
+                    onChange={(e) => {
+                      setSupportPhoneInput(e.target.value);
+                      setConfigDirty(true);
+                      setSaved(false);
+                    }}
+                    className={inputCls}
+                    placeholder="+244 923 111 222"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const digits = supportPhoneInput.replace(/\D/g, "");
+                      if (digits) {
+                        setPhone(digits);
+                        setConfigDirty(true);
+                        setSaved(false);
+                      }
+                    }}
+                    className="shrink-0 rounded-[var(--radius)] border border-border bg-mist px-3 text-xs font-bold text-primary hover:bg-mist/80"
+                    title="Copiar dígitos para o campo WhatsApp Business"
+                  >
+                    Usar no WhatsApp
+                  </button>
+                </div>
+              </Field>
+
+              <Field
+                label="E-mail Oficial de Suporte"
+                error={
+                  !validSupportEmail && "Introduza um endereço de e-mail válido (ex.: suporte@resolvemcx.ao)."
+                }
+                hint="Exibido na página de contactos e rodapé da plataforma."
+              >
+                <input
+                  type="email"
+                  value={supportEmailInput}
+                  onChange={(e) => {
+                    setSupportEmailInput(e.target.value);
+                    setConfigDirty(true);
+                    setSaved(false);
+                  }}
+                  className={inputCls}
+                  placeholder="suporte@resolvemcx.ao"
+                />
+              </Field>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field
+                label="Dias de Atendimento"
+                error={
+                  !validSupportDays && "Informe os dias de atendimento (ex.: Seg - Sáb)."
+                }
+                hint="Pode escolher um atalho abaixo ou escrever livremente (ex.: Seg - Dom)."
+              >
+                <div className="space-y-2">
+                  <input
+                    value={supportDaysInput}
+                    onChange={(e) => {
+                      setSupportDaysInput(e.target.value);
+                      setConfigDirty(true);
+                      setSaved(false);
+                    }}
+                    className={inputCls}
+                    placeholder="Seg - Sáb"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    {["Seg - Sex", "Seg - Sáb", "Seg - Dom", "Todos os dias"].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => {
+                          setSupportDaysInput(preset);
+                          setConfigDirty(true);
+                          setSaved(false);
+                        }}
+                        className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold transition ${
+                          supportDaysInput === preset
+                            ? "border-action bg-action/15 text-action"
+                            : "border-border bg-mist text-muted-foreground hover:text-primary"
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </Field>
+
+              <Field
+                label="Horário de Atendimento"
+                error={
+                  !validSupportHours && "Informe o horário de funcionamento (ex.: 07h às 19h)."
+                }
+                hint="Ex.: 07h às 19h, 08:00 - 20:00, etc."
+              >
+                <div className="space-y-2">
+                  <input
+                    value={supportHoursInput}
+                    onChange={(e) => {
+                      setSupportHoursInput(e.target.value);
+                      setConfigDirty(true);
+                      setSaved(false);
+                    }}
+                    className={inputCls}
+                    placeholder="07h às 19h"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    {["07h às 19h", "07h às 21h", "08h às 18h", "24 horas"].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => {
+                          setSupportHoursInput(preset);
+                          setConfigDirty(true);
+                          setSaved(false);
+                        }}
+                        className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold transition ${
+                          supportHoursInput === preset
+                            ? "border-action bg-action/15 text-action"
+                            : "border-border bg-mist text-muted-foreground hover:text-primary"
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </Field>
+            </div>
+
             <Field
               label="Número de WhatsApp Business"
               error={
                 !validPhone && "Use só dígitos com indicativo, ex.: 244923000000."
               }
-              hint="Com indicativo do país, sem +. Fica numa única configuração."
+              hint="Com indicativo do país, sem +. Utilizado no botão flutuante e links diretos de WhatsApp."
             >
               <input
                 value={phone}
                 onChange={(e) => {
                   setPhone(e.target.value);
+                  setConfigDirty(true);
                   setSaved(false);
                 }}
                 className={inputCls}
-                placeholder="244…"
+                placeholder="244923111222"
               />
             </Field>
-            <Field label="Mensagem inicial">
+
+            <Field label="Mensagem inicial do WhatsApp">
               <textarea
                 rows={3}
                 value={msg}
                 onChange={(e) => {
                   setMsg(e.target.value);
+                  setConfigDirty(true);
                   setSaved(false);
                 }}
                 className={inputCls + " py-3"}
               />
             </Field>
+
             <Field
               label="Taxa de Comissão Padrão para Parceiros (%)"
               hint="Percentual retido pela Resolve Express nos serviços executados por parceiros independentes."
@@ -4278,46 +4556,78 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                 value={commissionInput}
                 onChange={(e) => {
                   setCommissionInput(Number(e.target.value));
+                  setConfigDirty(true);
                   setSaved(false);
                 }}
                 className={inputCls + " w-32"}
               />
             </Field>
+
+            {/* Pré-visualização em Tempo Real */}
+            <div className="rounded-xl border border-border bg-mist/60 p-3.5 text-xs space-y-1">
+              <p className="font-bold text-primary uppercase tracking-wider text-[10px]">
+                Pré-visualização Pública (Cabeçalho / Rodapé / Contactos)
+              </p>
+              <p className="text-foreground">
+                📞 <strong>{supportPhoneInput || "+244 923 111 222"}</strong> · 📅{" "}
+                <strong>{supportDaysInput || "Seg - Sáb"}</strong> · ⏰{" "}
+                <strong>{supportHoursInput || "07h às 19h"}</strong> · ✉️{" "}
+                <strong>{supportEmailInput || "suporte@resolvemcx.ao"}</strong>
+              </p>
+            </div>
+
             <div className="flex flex-wrap items-center gap-3">
               <Btn
                 kind="ink"
-                disabled={!validPhone || msg.trim().length < 5}
+                disabled={
+                  isSaving ||
+                  !validPhone ||
+                  !validSupportPhone ||
+                  !validSupportEmail ||
+                  !validSupportDays ||
+                  !validSupportHours ||
+                  msg.trim().length < 5
+                }
                 onClick={async () => {
+                  const cleanWhatsapp =
+                    phone.replace(/\D/g, "") || supportPhoneInput.replace(/\D/g, "");
                   const ok = await executeAdminSave(
                     (st) => ({
-                      whatsapp: phone.replace(/\D/g, ""),
+                      whatsapp: cleanWhatsapp,
                       whatsappDefault: msg.trim(),
+                      supportPhone: supportPhoneInput.trim(),
+                      supportEmail: supportEmailInput.trim(),
+                      supportDays: supportDaysInput.trim(),
+                      supportHours: supportHoursInput.trim(),
                       partnerWallet: {
                         ...st.partnerWallet,
                         commissionRate: commissionInput,
                       },
                     }),
                     "Atualização de Configurações Globais",
-                    `WhatsApp: ${phone}, Comissão: ${commissionInput}%`
+                    `Suporte: ${supportPhoneInput.trim()}, Email: ${supportEmailInput.trim()}, Dias/Horário: ${supportDaysInput.trim()} ${supportHoursInput.trim()}, WhatsApp: ${cleanWhatsapp}, Comissão: ${commissionInput}%`
                   );
-                  if (ok) setSaved(true);
+                  if (ok) {
+                    setConfigDirty(false);
+                    setSaved(true);
+                  }
                 }}
               >
-                Guardar Configurações
+                {isSaving ? "A guardar..." : "Guardar Configurações"}
               </Btn>
               {saved && (
-                <span className="flex items-center gap-1 text-sm text-ok">
-                  <Icon name="Check" className="size-4" /> Guardado
+                <span className="flex items-center gap-1 text-sm text-ok font-semibold">
+                  <Icon name="Check" className="size-4" /> Guardado no Supabase
                 </span>
               )}
-              {store.whatsapp && (
+              {(phone || store.whatsapp) && (
                 <a
-                  href={waLink(store.whatsapp, store.whatsappDefault) || undefined}
+                  href={waLink(phone || store.whatsapp, msg || store.whatsappDefault) || undefined}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm font-semibold text-primary underline"
                 >
-                  Testar ligação
+                  Testar ligação WhatsApp
                 </a>
               )}
             </div>
@@ -5956,7 +6266,7 @@ export function Admin({ initialTab }: { initialTab?: string }) {
       {/* Modal de Adicionar / Editar Banner do Hero (Super Admin) */}
       {showAddHeroBanner && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs overflow-y-auto">
-          <div className="my-8 w-full max-w-2xl rounded-2xl border border-border bg-paper p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+          <div className="my-8 w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl border border-border bg-paper p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-border pb-3 mb-4">
               <div className="flex items-center gap-2">
                 <div className="size-8 rounded-lg bg-action/10 text-action grid place-items-center">
@@ -5967,13 +6277,16 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                     {editingHeroBanner ? "Editar Banner do Hero" : "Adicionar Novo Banner ao Hero"}
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Altere os textos, imagem e botões de destaque do carrossel principal
+                    Altere os textos, imagens (computador e celular) e botões de destaque do carrossel principal
                   </p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => {
+                  setHeroFormAssetRef(null);
+                  setHeroFormMobileAssetRef(null);
+                  setHeroFormError(null);
                   setShowAddHeroBanner(false);
                   setEditingHeroBanner(null);
                 }}
@@ -6219,21 +6532,63 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                 />
               </Field>
 
-              {/* Image Uploader */}
-              <ImageUploader
-                value={heroFormImage}
-                onChange={(img) => setHeroFormImage(img)}
-                fitMode={heroFormImageFit}
-                onFitModeChange={(fit) => setHeroFormImageFit(fit)}
-                assetCategory="banners"
-                assetTitle={`${heroFormTitleStart} ${heroFormTitleHighlight}`.trim() || "Hero Banner"}
-                onAssetUploaded={(asset) =>
-                  setHeroFormAssetRef(buildAssetReference(asset, asset.public_url || undefined))
-                }
-                label="Imagem do Banner (Upload por Ficheiro ou Link Web)"
-                helperText="Gravado em public-assets/super-admin/.../banners com sincronização em tempo real."
-                aspectRatio="video"
-              />
+              {/* Desktop & Mobile Image Uploaders */}
+              <div className="rounded-xl border border-border bg-mist/30 p-4 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-primary">
+                      Imagens do Banner (Computador &amp; Celular)
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Defina uma imagem horizontal para computador e, se desejar, uma versão própria para celular.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="rounded-xl border border-border bg-paper p-3.5 space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-primary">
+                      <Icon name="Monitor" className="size-3.5 text-action" />
+                      <span>Computador (Desktop)</span>
+                    </div>
+                    <ImageUploader
+                      value={heroFormImage}
+                      onChange={(img) => setHeroFormImage(img)}
+                      fitMode={heroFormImageFit}
+                      onFitModeChange={(fit) => setHeroFormImageFit(fit)}
+                      assetCategory="banners"
+                      assetTitle={`${heroFormTitleStart} ${heroFormTitleHighlight} (Desktop)`.trim() || "Hero Banner Desktop"}
+                      onAssetUploaded={(asset) =>
+                        setHeroFormAssetRef(buildAssetReference(asset, asset.public_url || undefined))
+                      }
+                      label="Imagem para Computador (Upload ou Link)"
+                      helperText="Recomendado formato horizontal (1920×650 px) para ecrãs grandes."
+                      aspectRatio="video"
+                    />
+                  </div>
+
+                  <div className="rounded-xl border border-border bg-paper p-3.5 space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-primary">
+                      <Icon name="Smartphone" className="size-3.5 text-action" />
+                      <span>Celular (Mobile)</span>
+                    </div>
+                    <ImageUploader
+                      value={heroFormMobileImage}
+                      onChange={(img) => setHeroFormMobileImage(img)}
+                      fitMode={heroFormMobileImageFit}
+                      onFitModeChange={(fit) => setHeroFormMobileImageFit(fit)}
+                      assetCategory="banners"
+                      assetTitle={`${heroFormTitleStart} ${heroFormTitleHighlight} (Celular)`.trim() || "Hero Banner Celular"}
+                      onAssetUploaded={(asset) =>
+                        setHeroFormMobileAssetRef(buildAssetReference(asset, asset.public_url || undefined))
+                      }
+                      label="Imagem para Celular (Upload ou Link)"
+                      helperText="Opcional: imagem otimizada para telemóveis. Se vazio, usa a de computador."
+                      aspectRatio="square"
+                    />
+                  </div>
+                </div>
+              </div>
 
               {/* Active Toggle */}
               <label className="flex items-center gap-2 cursor-pointer pt-1">
@@ -6260,6 +6615,8 @@ export function Admin({ initialTab }: { initialTab?: string }) {
                   kind="ghost"
                   type="button"
                   onClick={() => {
+                    setHeroFormAssetRef(null);
+                    setHeroFormMobileAssetRef(null);
                     setHeroFormError(null);
                     setShowAddHeroBanner(false);
                     setEditingHeroBanner(null);

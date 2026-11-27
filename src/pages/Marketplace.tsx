@@ -5,9 +5,11 @@ import { useStore, formatCurrency, nextOrderId, kz } from "../lib/store";
 import { AuthPromptModal } from "../ui/AuthPromptModal";
 import { PaymentCheckoutModal } from "../ui/PaymentCheckoutModal";
 import { isSupabaseConfigured, syncOrderToSupabaseStrict } from "../lib/supabase";
+import { useI18n } from "../lib/i18n";
 
 export function Marketplace({ initialCategory }: { initialCategory?: string }) {
   const [store, setStore] = useStore();
+  const { t } = useI18n();
   const [selectedCat, setSelectedCat] = useState<string>(initialCategory || "Todos");
   const [searchQuery, setSearchQuery] = useState("");
   const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
@@ -416,13 +418,13 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
           <div className="max-w-2xl">
             <span className="inline-flex items-center gap-2 rounded-full bg-orange-500/20 px-3.5 py-1 text-xs font-bold uppercase tracking-wider text-orange-300 ring-1 ring-orange-400/30">
               <Icon name="ShoppingBag" className="size-3.5 text-[#E6540F]" />
-              Loja Oficial Resolve Express
+              {t("market_badge")}
             </span>
             <h1 className="mt-3 font-display text-3xl font-black tracking-tight text-white sm:text-4xl lg:text-5xl">
-              Produtos essenciais com <span className="text-[#E6540F]">entrega rápida ao domicílio.</span>
+              {t("market_title")}
             </h1>
             <p className="mt-2 text-sm text-slate-200 sm:text-base leading-relaxed">
-              Água, gás, mercearia, eletrónica e kits essenciais com garantia de entrega no Huambo e em Angola.
+              {t("market_subtitle")}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -432,7 +434,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
               className="inline-flex items-center gap-2.5 rounded-2xl bg-[#E6540F] px-5 py-3 text-sm font-bold text-white shadow-lg shadow-orange-950/30 transition hover:brightness-110 active:scale-95 cursor-pointer"
             >
               <Icon name="ShoppingBasket" className="size-5" />
-              <span>Ver Carrinho</span>
+              <span>{t("market_cart_btn")}</span>
               {cartCount > 0 && (
                 <span className="grid size-5 place-items-center rounded-full bg-white text-xs font-black text-[#E6540F]">
                   {cartCount}
@@ -444,15 +446,15 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
       </div>
 
       <Section
-        eyebrow="Catálogo de Produtos"
-        title="Escolha e receba à sua porta"
+        eyebrow={t("market_badge")}
+        title={t("market_title")}
       >
       {/* Top Error Alert */}
       {orderError && (
         <div className="mb-4 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs font-semibold text-destructive flex items-center justify-between gap-2">
           <span>{orderError}</span>
           <button type="button" onClick={() => setOrderError(null)} className="font-bold underline">
-            Fechar
+            {t("common_close")}
           </button>
         </div>
       )}
@@ -464,7 +466,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
           <input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Pesquisar água, gás, frango, mercearia, kit limpeza..."
+            placeholder={t("market_search_placeholder")}
             className={inputCls + " pl-10 text-sm"}
           />
         </div>
@@ -476,7 +478,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
             className="relative flex items-center gap-2.5 rounded-[var(--radius)] border border-border bg-paper px-4 py-2.5 text-sm font-bold text-primary shadow-xs transition hover:border-action"
           >
             <Icon name="ShoppingBasket" className="size-5 text-action" />
-            <span>Carrinho</span>
+            <span>{t("market_cart_btn")}</span>
             {cartCount > 0 && (
               <span className="grid size-5 place-items-center rounded-full bg-action text-xs text-action-ink">
                 {cartCount}
@@ -504,7 +506,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
                   : "bg-paper text-muted-foreground border border-border hover:text-foreground hover:bg-mist"
               }`}
             >
-              <span>{cat}</span>
+              <span>{cat === "Todos" ? t("market_filter_all") : cat}</span>
               <span
                 className={`rounded-full px-1.5 py-0.2 text-[10px] ${
                   selectedCat === cat ? "bg-white/20 text-white" : "bg-mist text-muted-foreground"
@@ -551,12 +553,12 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
                 />
                 {hasPromo && (
                   <span className="absolute top-2.5 left-2.5 rounded-full bg-destructive text-white px-2.5 py-0.5 text-[11px] font-bold shadow-xs">
-                    PROMOÇÃO
+                    {t("section_market_promo")}
                   </span>
                 )}
                 {isFeat && (
                   <span className="absolute top-2.5 right-2.5 rounded-full bg-amber-500 text-amber-950 px-2 py-0.5 text-[10px] font-black shadow-xs flex items-center gap-0.5">
-                    <Icon name="Star" className="size-3 fill-amber-950" /> DESTAQUE
+                    <Icon name="Star" className="size-3 fill-amber-950" /> {t("cat_popular")}
                   </span>
                 )}
                 <span className="absolute bottom-2.5 left-2.5 rounded-full bg-black/60 text-white backdrop-blur-xs px-2.5 py-0.5 text-[10px] font-semibold">
@@ -568,7 +570,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
               <div className="flex flex-1 flex-col p-4 justify-between">
                 <div>
                   <span className="text-[11px] text-muted-foreground block truncate">
-                    Vendido por: <strong>{p.sellerName}</strong>
+                    {t("market_sold_by")}: <strong>{p.sellerName}</strong>
                   </span>
                   <h3 className="font-display font-bold text-base text-primary mt-1 leading-snug line-clamp-1 group-hover:text-action transition-colors">
                     {p.name}
@@ -602,7 +604,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
                       </span>
                     </div>
                     <span className="text-[11px] font-medium text-ok bg-ok/10 px-2 py-0.5 rounded">
-                      {p.stock} em stock
+                      {p.stock > 0 ? `${p.stock} ${t("market_in_stock")}` : t("market_out_of_stock")}
                     </span>
                   </div>
 
@@ -612,14 +614,14 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
                       className="min-h-9 px-2 text-xs"
                       onClick={() => handleAddToCart(p)}
                     >
-                      <Icon name="Plus" className="size-3.5" /> Carrinho
+                      {t("market_add_cart")}
                     </Btn>
                     <Btn
                       kind="action"
                       className="min-h-9 px-2 text-xs"
                       onClick={() => handleBuyNow(p)}
                     >
-                      Comprar Já
+                      {t("market_buy_now")}
                     </Btn>
                   </div>
                 </div>
@@ -723,8 +725,8 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
         ) : (
           <Empty
             icon="Package"
-            title="Nenhum produto encontrado"
-            text="Não existem produtos nesta categoria ou com os termos pesquisados."
+            title={t("cat_empty_title")}
+            text={t("cat_empty_text")}
           >
             <Btn
               kind="ghost"
@@ -733,7 +735,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
                 setSearchQuery("");
               }}
             >
-              Ver todos os produtos
+              {t("cat_clear_filters")}
             </Btn>
           </Empty>
         );
@@ -871,7 +873,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
                         setSelectedProductModal(null);
                       }}
                     >
-                      <Icon name="Plus" className="size-4" /> Carrinho
+                      {t("market_add_cart")}
                     </Btn>
                     <Btn
                       kind="action"
@@ -882,7 +884,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
                         setCheckoutModalOpen(true);
                       }}
                     >
-                      Comprar Já
+                      {t("market_buy_now")}
                     </Btn>
                   </div>
                 </div>
@@ -954,7 +956,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
               <div className="flex items-center gap-2">
                 <Icon name="ShoppingBasket" className="size-6 text-action" />
                 <h3 className="font-display text-xl font-black text-primary">
-                  O Seu Carrinho ({cartCount})
+                  {t("market_cart_title")} ({cartCount})
                 </h3>
               </div>
               <button
@@ -1052,21 +1054,21 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
                 {/* Totals */}
                 <div className="rounded-[var(--radius)] bg-mist p-4 text-sm space-y-2">
                   <div className="flex justify-between text-muted-foreground">
-                    <span>Subtotal produtos:</span>
+                    <span>{t("market_cart_subtotal")}</span>
                     <span>{formatCurrency(subtotalAOA, store.currency)}</span>
                   </div>
                   <div className="flex justify-between text-muted-foreground">
-                    <span>Taxa de entrega no Huambo:</span>
+                    <span>{t("market_cart_delivery")}</span>
                     <span>{formatCurrency(deliveryFeeAOA, store.currency)}</span>
                   </div>
                   {discountAOA > 0 && (
                     <div className="flex justify-between text-ok font-semibold">
-                      <span>Desconto aplicado:</span>
+                      <span>{t("market_cart_discount")}</span>
                       <span>-{formatCurrency(discountAOA, store.currency)}</span>
                     </div>
                   )}
                   <div className="border-t border-border pt-2 flex justify-between font-bold text-base text-primary">
-                    <span>Total da Encomenda:</span>
+                    <span>{t("market_cart_total")}</span>
                     <span className="font-display font-black text-xl text-action">
                       {formatCurrency(finalTotalAOA, store.currency)}
                     </span>
@@ -1084,14 +1086,14 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
                     setCheckoutModalOpen(true);
                   }}
                 >
-                  Finalizar Compra
+                  {t("market_cart_finish")}
                 </Btn>
               </div>
             ) : (
               <div className="py-16 text-center text-muted-foreground">
                 <Icon name="ShoppingBasket" className="mx-auto size-12 opacity-40 mb-3" />
-                <p className="font-bold text-primary">O seu carrinho está vazio</p>
-                <p className="text-xs mt-1">Adicione produtos do catálogo acima para encomendar.</p>
+                <p className="font-bold text-primary">{t("market_cart_empty")}</p>
+                <p className="text-xs mt-1">{t("market_cart_empty_sub")}</p>
               </div>
             )}
           </div>
@@ -1103,15 +1105,15 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
           <div className="w-full max-w-lg rounded-[calc(var(--radius)*1.5)] border border-border bg-paper p-6 shadow-2xl">
             <h3 className="font-display text-2xl font-black text-primary">
-              Finalizar Encomenda de Produtos
+              {t("market_checkout_title")}
             </h3>
             <p className="text-xs text-muted-foreground mt-1">
-              Confirme a província, município e morada de entrega em Angola.
+              {t("market_checkout_sub")}
             </p>
 
             <div className="my-5 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="Província (Angola)">
+                <Field label={t("book_province")}>
                   <select
                     value={deliveryProvince}
                     onChange={(e) => {
@@ -1132,7 +1134,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
                   </select>
                 </Field>
 
-                <Field label="Município">
+                <Field label={t("book_municipality")}>
                   <select
                     value={deliveryMunicipio}
                     onChange={(e) => setDeliveryMunicipio(e.target.value)}
@@ -1147,7 +1149,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
                 </Field>
               </div>
 
-              <Field label="Bairro">
+              <Field label={t("book_bairro")}>
                 <input
                   value={deliveryBairro}
                   onChange={(e) => setDeliveryBairro(e.target.value)}
@@ -1156,7 +1158,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
                 />
               </Field>
 
-              <Field label="Rua / Número / Referência">
+              <Field label={t("book_street")}>
                 <input
                   value={deliveryRua}
                   onChange={(e) => setDeliveryRua(e.target.value)}
@@ -1168,7 +1170,7 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
               <div className="rounded-[var(--radius)] bg-mist p-3.5 text-sm flex justify-between items-center">
                 <div className="flex items-center gap-2">
                   <Icon name="CreditCard" className="size-4 text-action" />
-                  <span className="font-bold text-xs text-primary">Total com Entrega:</span>
+                  <span className="font-bold text-xs text-primary">{t("market_cart_total")}</span>
                 </div>
                 <span className="font-display font-black text-xl text-primary">
                   {formatCurrency(finalTotalAOA, store.currency)}
@@ -1178,10 +1180,10 @@ export function Marketplace({ initialCategory }: { initialCategory?: string }) {
 
             <div className="flex justify-end gap-3">
               <Btn kind="ghost" onClick={() => setCheckoutModalOpen(false)}>
-                Voltar
+                {t("market_checkout_back")}
               </Btn>
               <Btn kind="action" onClick={handleProceedToPayment}>
-                <Icon name="ArrowRight" className="size-4" /> Avançar para Pagamento
+                <Icon name="ArrowRight" className="size-4" /> {t("market_checkout_confirm")}
               </Btn>
             </div>
           </div>

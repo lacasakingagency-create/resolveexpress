@@ -1,11 +1,14 @@
 import React, { useState } from "react";
 import { Icon, Btn, Field, inputCls, Section } from "../ui/kit";
-import { useStore, kz, waLink } from "../lib/store";
+import { useStore, kz, waLink, getSupportContactInfo } from "../lib/store";
 import { ImageUploader } from "../ui/ImageUploader";
 import { VirtualCardRequest, ImportQuoteRequest, ANGOLA_PROVINCES } from "../lib/data";
+import { useI18n } from "../lib/i18n";
 
 export function Importacao() {
   const [store, update] = useStore();
+  const { t } = useI18n();
+  const supportInfo = getSupportContactInfo(store);
   const [activeTab, setActiveTab] = useState<"importacao" | "cartoes" | "minhas-cotacoes">("importacao");
 
   // Modalidade A: Solicitação de Assistência para Cartão Virtual
@@ -164,16 +167,16 @@ export function Importacao() {
         <div className="relative z-10 mx-auto max-w-5xl text-center">
           <div className="inline-flex items-center gap-2 rounded-full bg-orange-500/20 px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-orange-300 ring-1 ring-orange-400/30">
             <Icon name="Plane" className="size-4 text-orange-400" />
-            Serviço Oficial de Importação & Pagamentos Internacionais
+            {t("import_badge")}
           </div>
 
           <h1 className="mt-5 font-display text-3xl font-black tracking-tight text-white sm:text-5xl lg:text-6xl">
-            IMPORTAMOS O QUE PRECISAS. <br className="hidden sm:inline" />
-            <span className="text-[#E6540F]">TU RECEBES SEM COMPLICAÇÕES.</span>
+            {t("import_title_1")} <br className="hidden sm:inline" />
+            <span className="text-[#E6540F]">{t("import_title_2")}</span>
           </h1>
 
           <p className="mx-auto mt-4 max-w-2xl text-sm text-slate-300 sm:text-base lg:text-lg leading-relaxed">
-            Precisas de um produto que não encontras facilmente em Angola? Nós ajudamos-te a encontrar fornecedores, tratar do processo de importação e acompanhar a chegada do teu produto.
+            {t("import_sub")}
           </p>
 
           {/* Quick Tab Selectors */}
@@ -188,7 +191,7 @@ export function Importacao() {
               }`}
             >
               <Icon name="PackageCheck" className="size-4" />
-              Importação por Encomenda
+              {t("import_tab_order")}
             </button>
 
             <button
@@ -201,7 +204,7 @@ export function Importacao() {
               }`}
             >
               <Icon name="CreditCard" className="size-4" />
-              Cartões Virtuais Internacionais
+              {t("import_tab_cards")}
             </button>
 
             <button
@@ -214,7 +217,7 @@ export function Importacao() {
               }`}
             >
               <Icon name="Receipt" className="size-4" />
-              Acompanhar Cotações ({myQuotes.length})
+              {t("import_tab_quotes")} ({myQuotes.length})
             </button>
           </div>
         </div>
@@ -291,7 +294,7 @@ export function Importacao() {
               <form onSubmit={handleSubmitImport} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-10">
                 <div className="border-b border-slate-100 pb-4">
                   <h3 className="font-display text-xl font-black text-slate-900">
-                    Solicitar Cotação de Importação
+                    {t("import_form_title")}
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
                     Preencha os dados do artigo pretendido para receber o orçamento oficial.
@@ -801,7 +804,7 @@ export function Importacao() {
                                   </button>
                                 )}
                                 <a
-                                  href={waLink("923111222", `Olá! Gostaria de falar sobre a minha cotação de importação ${q.id} (${q.productName}).`) || "#"}
+                                  href={waLink(supportInfo.whatsapp, `Olá! Gostaria de falar sobre a minha cotação de importação ${q.id} (${q.productName}).`) || "#"}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"

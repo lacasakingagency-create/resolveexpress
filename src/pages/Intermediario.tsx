@@ -7,9 +7,11 @@ import {
   IntermediaryNegotiation,
   ANGOLA_PROVINCES,
 } from "../lib/data";
+import { useI18n } from "../lib/i18n";
 
 export function Intermediario() {
   const [store, update] = useStore();
+  const { t } = useI18n();
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("TODAS");
   const [selectedCondition, setSelectedCondition] = useState<"TODOS" | "NOVO" | "USADO">("TODOS");
@@ -241,13 +243,13 @@ export function Intermediario() {
             <div className="max-w-2xl">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-orange-500/20 px-3.5 py-1 text-xs font-bold uppercase tracking-wider text-orange-300 ring-1 ring-orange-400/30">
                 <Icon name="Handshake" className="size-4" />
-                Intermediação Segura de Bens Materiais
+                {t("interm_badge")}
               </span>
               <h1 className="mt-3 font-display text-3xl font-black text-white sm:text-5xl">
-                INTERMEDIAÇÃO DE BENS MATERIAIS
+                {t("interm_title")}
               </h1>
               <p className="mt-2 text-sm text-slate-300 sm:text-base leading-relaxed">
-                Plataforma de aproximação segura entre compradores, proprietários, empresas e comerciantes no Huambo e em toda Angola. Casas, terrenos, viaturas, máquinas industriais e equipamentos novos e usados.
+                {t("interm_sub")}
               </p>
             </div>
 
@@ -258,7 +260,7 @@ export function Intermediario() {
                 className="flex items-center gap-2 rounded-2xl bg-[#E6540F] px-6 py-4 text-sm font-bold text-white shadow-xl transition hover:bg-[#cf490a] active:scale-95"
               >
                 <Icon name="PlusCircle" className="size-5" />
-                Publicar Anúncio de Bem Material
+                {t("interm_publish")}
               </button>
             </div>
           </div>
@@ -271,7 +273,7 @@ export function Intermediario() {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Pesquisar vivenda, terreno, hilux, trator, forno industrial..."
+                placeholder={t("common_search")}
                 className="w-full rounded-xl bg-white/10 pl-10 pr-4 py-2.5 text-sm text-white placeholder-white/60 outline-none focus:bg-white/20"
               />
             </div>
@@ -282,7 +284,7 @@ export function Intermediario() {
                 onChange={(e) => setSelectedCategory(e.target.value)}
                 className="w-full rounded-xl bg-[#071B33] px-3 py-2.5 text-sm text-white outline-none border border-white/20"
               >
-                <option value="TODAS">Todas as Categorias</option>
+                <option value="TODAS">{t("praca_all_cats")}</option>
                 {store.intermediaryCategories?.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
@@ -295,7 +297,7 @@ export function Intermediario() {
                 onChange={(e) => setSelectedProvince(e.target.value)}
                 className="w-full rounded-xl bg-[#071B33] px-3 py-2.5 text-sm text-white outline-none border border-white/20"
               >
-                <option value="TODAS">Todas as Províncias</option>
+                <option value="TODAS">{t("praca_all_provinces")}</option>
                 {ANGOLA_PROVINCES.map((p) => (
                   <option key={p.id} value={p.name}>{p.name}</option>
                 ))}
@@ -350,8 +352,7 @@ export function Intermediario() {
 
         {/* Filter Bar: Condition & Sort */}
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-500">Condição:</span>
+            <div className="flex items-center gap-2">
             {(["TODOS", "NOVO", "USADO"] as const).map((cond) => (
               <button
                 key={cond}
@@ -363,21 +364,24 @@ export function Intermediario() {
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
-                {cond === "TODOS" ? "Todos os Bens" : cond === "NOVO" ? "Novos" : "Usados"}
+                {cond === "TODOS"
+                  ? t("market_filter_all")
+                  : cond === "NOVO"
+                  ? t("section_praca_new_badge")
+                  : t("section_praca_used_badge")}
               </button>
             ))}
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-500">Ordenar por:</span>
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as any)}
               className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-700"
             >
-              <option value="recent">Mais Recentes</option>
-              <option value="price_asc">Menor Preço</option>
-              <option value="price_desc">Maior Preço</option>
+              <option value="recent">{t("praca_sort_newest")}</option>
+              <option value="price_asc">{t("praca_sort_price_asc")}</option>
+              <option value="price_desc">{t("praca_sort_price_desc")}</option>
             </select>
           </div>
         </div>
@@ -387,10 +391,10 @@ export function Intermediario() {
           <div className="rounded-3xl border border-dashed border-slate-200 bg-white py-16 text-center">
             <Icon name="PackageSearch" className="mx-auto size-12 text-slate-300" />
             <h4 className="mt-3 font-display text-lg font-bold text-slate-800">
-              Nenhum bem encontrado com estes filtros
+              {t("cat_empty_title")}
             </h4>
             <p className="text-xs text-slate-500 mt-1">
-              Tente redefinir os filtros de categoria ou província para ver outros anúncios.
+              {t("cat_empty_text")}
             </p>
             <button
               type="button"
@@ -402,7 +406,7 @@ export function Intermediario() {
               }}
               className="mt-4 rounded-xl bg-[#E6540F] px-4 py-2 text-xs font-bold text-white shadow-xs"
             >
-              Limpar Filtros
+              {t("cat_clear_filters")}
             </button>
           </div>
         ) : (

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Icon, go } from "./kit";
 import { useStore } from "../lib/store";
+import { useI18n } from "../lib/i18n";
 import { getDashboardRouteForRole } from "../lib/AuthContext";
 
 interface BeforeInstallPromptEvent extends Event {
@@ -16,6 +17,7 @@ export function MobileTabBar({
   onOpenAI: () => void;
 }) {
   const [store] = useStore();
+  const { t } = useI18n();
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
 
@@ -102,7 +104,7 @@ export function MobileTabBar({
           }`}
         >
           <Icon name="Home" className="size-5" />
-          <span className="text-[10px] mt-0.5">Início</span>
+          <span className="text-[10px] mt-0.5">{t("nav_home")}</span>
         </button>
 
         {/* Serviços */}
@@ -114,7 +116,7 @@ export function MobileTabBar({
           }`}
         >
           <Icon name="Wrench" className="size-5" />
-          <span className="text-[10px] mt-0.5">Serviços</span>
+          <span className="text-[10px] mt-0.5">{t("nav_services")}</span>
         </button>
 
         {/* Resolve AI (Highlight in center) */}
@@ -148,7 +150,7 @@ export function MobileTabBar({
               </span>
             )}
           </div>
-          <span className="text-[10px] mt-0.5">Loja</span>
+          <span className="text-[10px] mt-0.5">{t("nav_mobile_store")}</span>
         </button>
 
         {/* Conta / Perfil */}
@@ -171,7 +173,7 @@ export function MobileTabBar({
             <Icon name="User" className="size-5" />
           )}
           <span className="text-[10px] mt-0.5">
-            {isAuth ? "Perfil" : "Entrar"}
+            {isAuth ? t("nav_mobile_profile") : t("nav_login")}
           </span>
         </button>
       </nav>
